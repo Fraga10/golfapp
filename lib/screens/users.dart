@@ -122,65 +122,66 @@ class _UsersScreenState extends State<UsersScreen> {
               ),
               ElevatedButton(onPressed: _showCreate, child: const Text('Criar novo utilizador')),
               const SizedBox(height: 8),
-              if (isAdmin) Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                child: Column(children: [
-                  SwitchListTile(
-                    title: const Text('Auto updates (server)'),
-                    subtitle: _autoUpdateEnabled == null ? const Text('estado não carregado') : null,
-                    value: _autoUpdateEnabled ?? false,
-                    onChanged: _autoUpdateEnabled == null ? null : (v) async {
-                      try {
-                        final newVal = await Api.setAutoUpdate(v);
-                        if (!mounted) return;
-                        setState(() => _autoUpdateEnabled = newVal);
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
-                      } catch (e) {
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                      }
-                    },
-                  ),
-                  Row(children: [
-                    ElevatedButton(
-                      onPressed: () async {
-                        final ok = await showDialog<bool>(
-                          context: context,
-                          builder: (_) => AlertDialog(
-                            title: const Text('Confirmar trigger update'),
-                            content: const Text('Isto irá forçar o backend a atualizar e reiniciar (servidor ficará temporariamente indisponível). Continuar?'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-                              TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim')),
-                            ],
-                          ),
-                        );
-                        if (ok != true) return;
+              if (isAdmin)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                  child: Column(children: [
+                    SwitchListTile(
+                      title: const Text('Auto updates (server)'),
+                      subtitle: _autoUpdateEnabled == null ? const Text('estado não carregado') : null,
+                      value: _autoUpdateEnabled ?? false,
+                      onChanged: _autoUpdateEnabled == null ? null : (v) async {
                         try {
-                          final res = await Api.triggerUpdate();
+                          final newVal = await Api.setAutoUpdate(v);
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
+                          setState(() => _autoUpdateEnabled = newVal);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
                         } catch (e) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
                         }
                       },
-                      child: const Text('Trigger Update'),
                     ),
-                    const SizedBox(width: 12),
-                    ElevatedButton(onPressed: () async {
-                      try {
-                        final log = await Api.getUpdateLog();
-                        if (!mounted) return;
-                        setState(() => _updateLog = log);
-                      } catch (e) {
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
-                      }
-                    }, child: const Text('Atualizar Log')),
-                  ])
-                ]),
-              ),
+                    Row(children: [
+                      ElevatedButton(
+                        onPressed: () async {
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('Confirmar trigger update'),
+                              content: const Text('Isto irá forçar o backend a atualizar e reiniciar (servidor ficará temporariamente indisponível). Continuar?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+                                TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim')),
+                              ],
+                            ),
+                          );
+                          if (ok != true) return;
+                          try {
+                            final res = await Api.triggerUpdate();
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                          }
+                        },
+                        child: const Text('Trigger Update'),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton(onPressed: () async {
+                        try {
+                          final log = await Api.getUpdateLog();
+                          if (!mounted) return;
+                          setState(() => _updateLog = log);
+                        } catch (e) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                        }
+                      }, child: const Text('Atualizar Log')),
+                    ])
+                  ]),
+                ),
               Expanded(
                 child: ListView.builder(
                   itemCount: users.length,
@@ -203,7 +204,7 @@ class _UsersScreenState extends State<UsersScreen> {
                   Container(
                     height: 180,
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceVariant, borderRadius: BorderRadius.circular(6)),
+                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
                     child: SingleChildScrollView(child: SelectableText(_updateLog)),
                   ),
                 ]),
