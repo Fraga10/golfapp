@@ -11,13 +11,11 @@ class AddGameScreen extends StatefulWidget {
 class _AddGameScreenState extends State<AddGameScreen> {
   final _formKey = GlobalKey<FormState>();
   DateTime _date = DateTime.now();
-  final _courseCtrl = TextEditingController();
   final _scoreCtrl = TextEditingController();
   final _holesCtrl = TextEditingController(text: '18');
   int _selectedHoles = 18;
   bool _customHoles = false;
   final _notesCtrl = TextEditingController();
-  bool _isPast = false;
   final _playersCtrl = TextEditingController();
   // store per-player per-hole strokes when building a past game
   final Map<String, Map<int, int>> _playerStrokes = {};
@@ -26,7 +24,6 @@ class _AddGameScreenState extends State<AddGameScreen> {
 
   @override
   void dispose() {
-    _courseCtrl.dispose();
     _scoreCtrl.dispose();
     _holesCtrl.dispose();
     _playersCtrl.dispose();
@@ -39,7 +36,8 @@ class _AddGameScreenState extends State<AddGameScreen> {
     // Create remotely via API
     try {
       final players = <Map<String, dynamic>>[];
-      if (_isPast && _playersCtrl.text.trim().isNotEmpty) {
+      final isPast = _gameFlow == 'import';
+      if (isPast && _playersCtrl.text.trim().isNotEmpty) {
         final names = _playersCtrl.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
         for (final n in names) {
           final playerMap = <String, dynamic>{'player_name': n};
@@ -50,11 +48,14 @@ class _AddGameScreenState extends State<AddGameScreen> {
           players.add(playerMap);
         }
       }
-      final status = _isPast ? 'finished' : 'active';
-      final holes = _isPast ? (int.tryParse(_holesCtrl.text) ?? _selectedHoles) : null;
+      final status = isPast ? 'finished' : 'active';
+      final holes = isPast ? (int.tryParse(_holesCtrl.text) ?? _selectedHoles) : null;
+      // Course is auto-derived from selected mode
+      final courseName = _gameMode == 'pitch' ? 'Pitch & Putt' : 'Standard';
+      final createdAt = DateTime.now();
       final id = await Api.createGame(
-        _courseCtrl.text.trim(),
-        _date,
+        courseName,
+        createdAt,
         holes: holes,
         status: status,
         players: players.isNotEmpty ? players : null,
@@ -93,16 +94,7 @@ class _AddGameScreenState extends State<AddGameScreen> {
                   },
                 ),
               ),
-              TextFormField(
-                controller: _courseCtrl,
-                decoration: const InputDecoration(labelText: 'Campo'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Insira o nome do campo' : null,
-              ),
-              SwitchListTile(
-                title: const Text('Jogo passado'),
-                value: _isPast,
-                onChanged: (v) => setState(() => _isPast = v),
-              ),
+              // Course is derived from selected mode; 'Jogo passado' is implied by Flow == 'import'
               Row(
                 children: [
                   Expanded(child: Text('Tipo:')),
@@ -134,18 +126,18 @@ class _AddGameScreenState extends State<AddGameScreen> {
                   ),
                 ],
               ),
-              if (_isPast)
+              if (_gameFlow == 'import')
                 TextFormField(
                   controller: _scoreCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'Resultado (score)'),
                 ),
-              if (_isPast)
+              if (_gameFlow == 'import')
                 TextFormField(
                   controller: _playersCtrl,
                   decoration: const InputDecoration(labelText: 'Jogadores (separar por vírgula)'),
                 ),
-              if (_isPast) DropdownButtonFormField<int>(
+              if (_gameFlow == 'import') DropdownButtonFormField<int>(
                 initialValue: _customHoles ? null : _selectedHoles,
                 decoration: const InputDecoration(labelText: 'Buracos'),
                 items: const [
@@ -166,13 +158,13 @@ class _AddGameScreenState extends State<AddGameScreen> {
                   });
                 },
               ),
-              if (_isPast && _customHoles)
+              if (_gameFlow == 'import' && _customHoles)
                 TextFormField(
                   controller: _holesCtrl,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'Buracos (custom)'),
                 ),
-              if (_isPast && (_playersCtrl.text.trim().isNotEmpty))
+              if (_gameFlow == 'import' && (_playersCtrl.text.trim().isNotEmpty))
                 Padding(
                   padding: const EdgeInsets.only(top: 12.0),
                   child: ElevatedButton(
