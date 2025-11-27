@@ -133,4 +133,50 @@ class Api {
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     return map['api_key'] as String;
   }
+
+  // Admin: get auto-update status
+  static Future<bool> getAutoUpdate() async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.get(Uri.parse('$baseUrl/admin/auto_update'), headers: headers);
+    if (res.statusCode == 200) {
+      final map = jsonDecode(res.body) as Map<String, dynamic>;
+      return map['enabled'] as bool? ?? false;
+    }
+    throw Exception('Failed to get auto-update status: ${res.statusCode}');
+  }
+
+  static Future<bool> setAutoUpdate(bool enabled) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.post(Uri.parse('$baseUrl/admin/auto_update'), headers: headers, body: jsonEncode({'enabled': enabled}));
+    if (res.statusCode == 200) {
+      final map = jsonDecode(res.body) as Map<String, dynamic>;
+      return map['enabled'] as bool? ?? false;
+    }
+    throw Exception('Failed to set auto-update: ${res.statusCode}');
+  }
+
+  // Admin: trigger an immediate update (git pull / pub get) — server will exit to allow restart
+  static Future<Map<String, dynamic>> triggerUpdate() async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.post(Uri.parse('$baseUrl/admin/trigger_update'), headers: headers, body: jsonEncode({}));
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }
+    throw Exception('Failed to trigger update: ${res.statusCode}');
+  }
+
+  // Admin: fetch backend update.log contents
+  static Future<String> getUpdateLog() async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.get(Uri.parse('$baseUrl/admin/update_log'), headers: headers);
+    if (res.statusCode == 200) {
+      final map = jsonDecode(res.body) as Map<String, dynamic>;
+      return map['log'] as String? ?? '';
+    }
+    throw Exception('Failed to fetch update log: ${res.statusCode}');
+  }
 }

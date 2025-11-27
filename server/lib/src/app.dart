@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:async';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 
@@ -12,6 +14,103 @@ final Map<int, Set<WebSocketChannel>> _gameSockets = {};
 
 Handler createHandler() {
   final router = Router();
+
+  // Self-update / watcher state
+  bool _autoUpdateEnabled = false;
+  bool _updateInProgress = false;
+  DateTime _lastObserved = DateTime.now();
+
+  final File _autoFile = File('.autoupdate');
+  if (_autoFile.existsSync()) {
+    try {
+      final content = _autoFile.readAsStringSync().trim();
+      _autoUpdateEnabled = content.toLowerCase() == 'true';
+    } catch (_) {}
+  }
+
+  void _saveAutoUpdate(bool v) {
+    _autoUpdateEnabled = v;
+    try {
+      _autoFile.writeAsStringSync(v ? 'true' : 'false');
+    } catch (_) {}
+  }
+
+  Future<DateTime> _latestSourceMTime(Directory dir) async {
+    DateTime latest = DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      await for (final entity in dir.list(recursive: true, followLinks: false)) {
+        if (entity is File) {
+          final path = entity.path;
+          if (path.endsWith('.dart') || path.endsWith('.yaml') || path.endsWith('.pubspec')) {
+            try {
+              final stat = await entity.stat();
+              if (stat.modified.isAfter(latest)) latest = stat.modified;
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+    return latest;
+  }
+
+  Future<void> _performUpdate() async {
+    if (_updateInProgress) return;
+    _updateInProgress = true;
+    try {
+      // Run update steps and log output. In Docker we should NOT spawn a new
+      // detached process; instead exit and rely on the container supervisor
+      // (Docker restart policy) to bring the service back.
+      final log = File('update.log');
+      void _append(String s) {
+        try {
+          log.writeAsStringSync(s + '\n', mode: FileMode.append);
+        } catch (_) {}
+      }
+      _append('=== Update started: ${DateTime.now().toIso8601String()} ===');
+      try {
+        final gitCheck = await Process.run('git', ['rev-parse', '--is-inside-work-tree']);
+        _append('git check exit=${gitCheck.exitCode}');
+        _append(gitCheck.stdout?.toString() ?? '');
+        _append(gitCheck.stderr?.toString() ?? '');
+        if (gitCheck.exitCode == 0) {
+          final gitPull = await Process.run('git', ['pull']);
+          _append('git pull exit=${gitPull.exitCode}');
+          _append(gitPull.stdout?.toString() ?? '');
+          _append(gitPull.stderr?.toString() ?? '');
+        } else {
+          _append('not a git repository');
+        }
+      } catch (e) {
+        _append('git error: $e');
+      }
+      try {
+        final pubGet = await Process.run('dart', ['pub', 'get']);
+        _append('pub get exit=${pubGet.exitCode}');
+        _append(pubGet.stdout?.toString() ?? '');
+        _append(pubGet.stderr?.toString() ?? '');
+      } catch (e) {
+        _append('pub get error: $e');
+      }
+      _append('=== Update finished; exiting to allow supervisor to restart ===');
+      // small delay to flush logs
+      await Future.delayed(Duration(milliseconds: 200));
+      exit(0);
+    } finally {
+      _updateInProgress = false;
+    }
+  }
+
+  // start a lightweight watcher that checks for changes every 5 seconds
+  Timer.periodic(Duration(seconds: 5), (t) async {
+    if (!_autoUpdateEnabled || _updateInProgress) return;
+    final dir = Directory.current;
+    final latest = await _latestSourceMTime(dir);
+    if (latest.isAfter(_lastObserved)) {
+      _lastObserved = latest;
+      // perform update
+      await _performUpdate();
+    }
+  });
 
   // Helper: extract API key from Authorization header and return user row
   Future<Map<String, dynamic>?> userFromRequest(Request req) async {
@@ -35,12 +134,7 @@ Handler createHandler() {
     final bytes = List<int>.generate(length, (_) => rnd.nextInt(256));
     return base64Url.encode(bytes);
   }
-  // fallback hash (not used when PBKDF2 is applied)
-  String hash(String password) {
-    final bytes = utf8.encode(password);
-    final digest = sha256.convert(bytes);
-    return digest.toString();
-  }
+  // (removed unused fallback hash)
 
   // PBKDF2-HMAC-SHA256 implementation returning hex digest
   String pbkdf20(String password, String salt, int iterations, int dkLen) {
@@ -277,6 +371,60 @@ Handler createHandler() {
     return Response.ok(jsonEncode({'api_key': newKey}), headers: {'content-type': 'application/json'});
   });
 
+  // Admin: delete a user
+  router.delete('/users/<id|[0-9]+>', (Request req, String id) async {
+    final requester = await userFromRequest(req);
+    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
+    final uid = int.parse(id);
+    // Ensure user exists
+    final res = await DB.conn.query('SELECT id, name, role FROM users WHERE id = @id', substitutionValues: {'id': uid});
+    if (res.isEmpty) return Response.notFound('User not found');
+    final targetRole = res.first[2] as String? ?? 'viewer';
+    // Prevent deleting the last admin
+    if (targetRole == 'admin') {
+      final adminsRes = await DB.conn.query("SELECT count(*) FROM users WHERE role = 'admin'");
+      final adminCount = (adminsRes.first[0] as int?) ?? 0;
+      if (adminCount <= 1) {
+        return Response(400, body: 'Cannot delete the last admin');
+      }
+    }
+    await DB.conn.query('DELETE FROM users WHERE id = @id', substitutionValues: {'id': uid});
+    return Response.ok(jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
+  });
+
+  // Change password for a user. Admins may change any user's password without current password.
+  // Non-admin users must provide current_password.
+  router.post('/users/<id|[0-9]+>/password', (Request req, String id) async {
+    final requester = await userFromRequest(req);
+    if (requester == null) return Response.forbidden('Authentication required');
+    final uid = int.parse(id);
+    final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final newPassword = body['new_password'] as String?;
+    final currentPassword = body['current_password'] as String?;
+    if (newPassword == null || newPassword.isEmpty) return Response(400, body: 'Missing new_password');
+
+    // Permission: admin or same user
+    final isAdmin = (requester['role'] as String?) == 'admin';
+    if (!isAdmin && (requester['id'] as int) != uid) {
+      return Response.forbidden('Cannot change other user password');
+    }
+
+    // Ensure target exists and, if non-admin, verify current password
+    final res = await DB.conn.query('SELECT password_hash FROM users WHERE id = @id', substitutionValues: {'id': uid});
+    if (res.isEmpty) return Response.notFound('User not found');
+    final storedHash = res.first[0] as String?;
+    if (!isAdmin) {
+      if (storedHash == null || storedHash.isEmpty) return Response(400, body: 'User has no password set');
+      if (currentPassword == null || !verifyPassword(currentPassword, storedHash)) return Response.forbidden('Invalid current password');
+    }
+
+    final passHash = makePasswordHash(newPassword);
+    // rotate api key on password change to force re-login
+    final newKey = randomToken();
+    await DB.conn.query('UPDATE users SET password_hash = @ph, api_key = @k WHERE id = @id', substitutionValues: {'ph': passHash, 'k': newKey, 'id': uid});
+    return Response.ok(jsonEncode({'ok': true, 'api_key': newKey}), headers: {'content-type': 'application/json'});
+  });
+
   router.patch('/games/<id|[0-9]+>', (Request req, String id) async {
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final updates = <String>[];
@@ -374,19 +522,48 @@ Handler createHandler() {
     });
   }));
 
-  // Admin: trigger hot-reload for all connected clients (broadcast)
-  router.post('/admin/hotreload', (Request req) async {
+  // (hot_reload endpoint removed temporarily)
+
+  // Admin: return the backend update log (update.log) content
+  router.get('/admin/update_log', (Request req) async {
     final requester = await userFromRequest(req);
     if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
-    final payload = jsonEncode({'type': 'hot_reload', 'ts': DateTime.now().toIso8601String()});
-    for (final sockets in _gameSockets.values) {
-      for (final s in sockets) {
-        try {
-          s.sink.add(payload);
-        } catch (_) {}
-      }
+    try {
+      final file = File('update.log');
+      if (!file.existsSync()) return Response.ok(jsonEncode({'log': ''}), headers: {'content-type': 'application/json'});
+      final content = await file.readAsString();
+      return Response.ok(jsonEncode({'log': content}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error reading log');
     }
-    return Response.ok(jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
+  });
+
+  // Admin: get/set auto-update status
+  router.get('/admin/auto_update', (Request req) async {
+    final requester = await userFromRequest(req);
+    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
+    return Response.ok(jsonEncode({'enabled': _autoUpdateEnabled}), headers: {'content-type': 'application/json'});
+  });
+
+  router.post('/admin/auto_update', (Request req) async {
+    final requester = await userFromRequest(req);
+    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
+    final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final enabled = body['enabled'] as bool?;
+    if (enabled == null) return Response(400, body: 'Missing enabled flag');
+    _saveAutoUpdate(enabled);
+    return Response.ok(jsonEncode({'ok': true, 'enabled': _autoUpdateEnabled}), headers: {'content-type': 'application/json'});
+  });
+
+  // Admin: force immediate update (git pull / pub get / restart)
+  router.post('/admin/trigger_update', (Request req) async {
+    final requester = await userFromRequest(req);
+    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
+    // run update asynchronously; endpoint will return before exiting
+    Future(() async {
+      await _performUpdate();
+    });
+    return Response.ok(jsonEncode({'ok': true, 'message': 'Update started'}), headers: {'content-type': 'application/json'});
   });
 
   return router.call;

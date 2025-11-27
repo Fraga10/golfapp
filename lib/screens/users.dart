@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api.dart';
+import 'login.dart';
 
 class UsersScreen extends StatefulWidget {
   const UsersScreen({super.key});
@@ -10,6 +11,8 @@ class UsersScreen extends StatefulWidget {
 
 class _UsersScreenState extends State<UsersScreen> {
   late Future<List<Map<String, dynamic>>> _usersFuture;
+  bool? _autoUpdateEnabled;
+  String _updateLog = '';
 
   @override
   void initState() {
@@ -18,7 +21,10 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   void _load() {
-    setState(() => _usersFuture = Api.listUsers());
+    setState(() {
+      _usersFuture = Api.listUsers();
+    });
+    _loadAdminState();
   }
 
   Future<void> _showCreate() async {
@@ -64,6 +70,24 @@ class _UsersScreenState extends State<UsersScreen> {
     }
   }
 
+  Future<void> _loadAdminState() async {
+    try {
+      final enabled = await Api.getAutoUpdate();
+      final log = await Api.getUpdateLog();
+      if (!mounted) return;
+      setState(() {
+        _autoUpdateEnabled = enabled;
+        _updateLog = log;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _autoUpdateEnabled = null;
+        _updateLog = 'Unable to fetch server log or status.';
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -74,9 +98,89 @@ class _UsersScreenState extends State<UsersScreen> {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
           if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
           final users = snapshot.data ?? [];
+          final current = Api.currentUser();
+          final isAdmin = current != null && (current['role'] as String?) == 'admin';
           return Column(
             children: [
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Row(children: [
+                  Expanded(child: Text(current != null ? 'Logado como: ${current['name']} (${current['role']})' : 'Não autenticado')),
+                  TextButton(
+                    onPressed: () async {
+                      if (current == null) {
+                        final res = await Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+                        if (res != null) _load();
+                      } else {
+                        await Api.logout();
+                        _load();
+                      }
+                    },
+                    child: Text(current == null ? 'Login' : 'Logout'),
+                  ),
+                ]),
+              ),
               ElevatedButton(onPressed: _showCreate, child: const Text('Criar novo utilizador')),
+              const SizedBox(height: 8),
+              if (isAdmin) Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                child: Column(children: [
+                  SwitchListTile(
+                    title: const Text('Auto updates (server)'),
+                    subtitle: _autoUpdateEnabled == null ? const Text('estado não carregado') : null,
+                    value: _autoUpdateEnabled ?? false,
+                    onChanged: _autoUpdateEnabled == null ? null : (v) async {
+                      try {
+                        final newVal = await Api.setAutoUpdate(v);
+                        if (!mounted) return;
+                        setState(() => _autoUpdateEnabled = newVal);
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      }
+                    },
+                  ),
+                  Row(children: [
+                    ElevatedButton(
+                      onPressed: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text('Confirmar trigger update'),
+                            content: const Text('Isto irá forçar o backend a atualizar e reiniciar (servidor ficará temporariamente indisponível). Continuar?'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+                              TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim')),
+                            ],
+                          ),
+                        );
+                        if (ok != true) return;
+                        try {
+                          final res = await Api.triggerUpdate();
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
+                        } catch (e) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                        }
+                      },
+                      child: const Text('Trigger Update'),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(onPressed: () async {
+                      try {
+                        final log = await Api.getUpdateLog();
+                        if (!mounted) return;
+                        setState(() => _updateLog = log);
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                      }
+                    }, child: const Text('Atualizar Log')),
+                  ])
+                ]),
+              ),
               Expanded(
                 child: ListView.builder(
                   itemCount: users.length,
@@ -89,6 +193,20 @@ class _UsersScreenState extends State<UsersScreen> {
                     );
                   },
                 ),
+              ),
+              const Divider(),
+              Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Backend update.log', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 180,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceVariant, borderRadius: BorderRadius.circular(6)),
+                    child: SingleChildScrollView(child: SelectableText(_updateLog)),
+                  ),
+                ]),
               ),
             ],
           );
