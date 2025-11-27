@@ -21,6 +21,15 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   void _load() {
+    final current = Api.currentUser();
+    if (current == null || (current['role'] as String?) != 'admin') {
+      // Avoid calling the admin-only endpoint when not an admin.
+      setState(() {
+        _usersFuture = Future.error('Requires admin (please login as admin)');
+      });
+      _loadAdminState();
+      return;
+    }
     setState(() {
       _usersFuture = Api.listUsers();
     });

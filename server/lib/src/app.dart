@@ -11,31 +11,35 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'db.dart';
 
 final Map<int, Set<WebSocketChannel>> _gameSockets = {};
+final Set<WebSocketChannel> _adminSockets = {};
 
 Handler createHandler() {
   final router = Router();
 
   // Self-update / watcher state
-  bool _autoUpdateEnabled = false;
-  bool _updateInProgress = false;
-  DateTime _lastObserved = DateTime.now();
+  bool autoUpdateEnabled = false;
+  bool updateInProgress = false;
+  DateTime lastObserved = DateTime.now();
+  DateTime? lastUpdateStarted;
+  String lastUpdateStatus = 'idle';
+  String? lastUpdateMessage;
 
-  final File _autoFile = File('.autoupdate');
-  if (_autoFile.existsSync()) {
+  final File autoFile = File('.autoupdate');
+  if (autoFile.existsSync()) {
     try {
-      final content = _autoFile.readAsStringSync().trim();
-      _autoUpdateEnabled = content.toLowerCase() == 'true';
+      final content = autoFile.readAsStringSync().trim();
+      autoUpdateEnabled = content.toLowerCase() == 'true';
     } catch (_) {}
   }
 
-  void _saveAutoUpdate(bool v) {
-    _autoUpdateEnabled = v;
+  void saveAutoUpdate(bool v) {
+    autoUpdateEnabled = v;
     try {
-      _autoFile.writeAsStringSync(v ? 'true' : 'false');
+      autoFile.writeAsStringSync(v ? 'true' : 'false');
     } catch (_) {}
   }
 
-  Future<DateTime> _latestSourceMTime(Directory dir) async {
+  Future<DateTime> latestSourceMTime(Directory dir) async {
     DateTime latest = DateTime.fromMillisecondsSinceEpoch(0);
     try {
       await for (final entity in dir.list(recursive: true, followLinks: false)) {
@@ -53,62 +57,78 @@ Handler createHandler() {
     return latest;
   }
 
-  Future<void> _performUpdate() async {
-    if (_updateInProgress) return;
-    _updateInProgress = true;
+  Future<void> performUpdate() async {
+    if (updateInProgress) return;
+    updateInProgress = true;
     try {
-      // Run update steps and log output. In Docker we should NOT spawn a new
-      // detached process; instead exit and rely on the container supervisor
-      // (Docker restart policy) to bring the service back.
+      // Run update steps and log output. Do NOT exit the process.
       final log = File('update.log');
-      void _append(String s) {
+      void append(String s) {
         try {
-          log.writeAsStringSync(s + '\n', mode: FileMode.append);
+          log.writeAsStringSync('$s\n', mode: FileMode.append);
         } catch (_) {}
       }
-      _append('=== Update started: ${DateTime.now().toIso8601String()} ===');
+      lastUpdateStarted = DateTime.now();
+      lastUpdateStatus = 'running';
+      lastUpdateMessage = null;
+      append('=== Update started: ${lastUpdateStarted!.toIso8601String()} ===');
+      // notify admin websockets that update started
+      try {
+        final notice = jsonEncode({'type': 'update_status', 'status': 'running', 'started': lastUpdateStarted!.toIso8601String()});
+        for (final s in _adminSockets) {
+          try { s.sink.add(notice); } catch (_) {}
+        }
+      } catch (_) {}
       try {
         final gitCheck = await Process.run('git', ['rev-parse', '--is-inside-work-tree']);
-        _append('git check exit=${gitCheck.exitCode}');
-        _append(gitCheck.stdout?.toString() ?? '');
-        _append(gitCheck.stderr?.toString() ?? '');
+        append('git check exit=${gitCheck.exitCode}');
+        append(gitCheck.stdout?.toString() ?? '');
+        append(gitCheck.stderr?.toString() ?? '');
         if (gitCheck.exitCode == 0) {
           final gitPull = await Process.run('git', ['pull']);
-          _append('git pull exit=${gitPull.exitCode}');
-          _append(gitPull.stdout?.toString() ?? '');
-          _append(gitPull.stderr?.toString() ?? '');
+          append('git pull exit=${gitPull.exitCode}');
+          append(gitPull.stdout?.toString() ?? '');
+          append(gitPull.stderr?.toString() ?? '');
         } else {
-          _append('not a git repository');
+          append('not a git repository');
         }
       } catch (e) {
-        _append('git error: $e');
+        append('git error: $e');
       }
       try {
         final pubGet = await Process.run('dart', ['pub', 'get']);
-        _append('pub get exit=${pubGet.exitCode}');
-        _append(pubGet.stdout?.toString() ?? '');
-        _append(pubGet.stderr?.toString() ?? '');
+        append('pub get exit=${pubGet.exitCode}');
+        append(pubGet.stdout?.toString() ?? '');
+        append(pubGet.stderr?.toString() ?? '');
       } catch (e) {
-        _append('pub get error: $e');
+        append('pub get error: $e');
       }
-      _append('=== Update finished; exiting to allow supervisor to restart ===');
+      append('=== Update finished; process continues (no restart) ===');
+      lastUpdateStatus = 'finished';
+      lastUpdateMessage = 'Update finished; no automatic restart performed. Check update.log for details.';
+      // notify admin websockets that update finished
+      try {
+        final notice = jsonEncode({'type': 'update_status', 'status': 'finished', 'started': lastUpdateStarted?.toIso8601String(), 'message': lastUpdateMessage, 'ts': DateTime.now().toIso8601String()});
+        for (final s in _adminSockets) {
+          try { s.sink.add(notice); } catch (_) {}
+        }
+      } catch (_) {}
       // small delay to flush logs
       await Future.delayed(Duration(milliseconds: 200));
-      exit(0);
     } finally {
-      _updateInProgress = false;
+      updateInProgress = false;
     }
   }
 
   // start a lightweight watcher that checks for changes every 5 seconds
   Timer.periodic(Duration(seconds: 5), (t) async {
-    if (!_autoUpdateEnabled || _updateInProgress) return;
+    if (!autoUpdateEnabled || updateInProgress) return;
     final dir = Directory.current;
-    final latest = await _latestSourceMTime(dir);
-    if (latest.isAfter(_lastObserved)) {
-      _lastObserved = latest;
+    final latest = await latestSourceMTime(dir);
+    if (latest.isAfter(lastObserved)) {
+      lastObserved = latest;
       // perform update
-      await _performUpdate();
+      await performUpdate();
     }
   });
 
@@ -657,6 +677,18 @@ Handler createHandler() {
     });
   }));
 
+  // WebSocket endpoint for admin live update notifications
+  router.get('/ws/admin/updates', webSocketHandler((webSocket, req) {
+    try {
+      _adminSockets.add(webSocket);
+    } catch (_) {}
+    webSocket.stream.listen((message) {
+      // no incoming messages expected
+    }, onDone: () {
+      _adminSockets.remove(webSocket);
+    });
+  }));
+
   // (hot_reload endpoint removed temporarily)
 
   // Admin: return the backend update log (update.log) content
@@ -665,19 +697,22 @@ Handler createHandler() {
     if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
     try {
       final file = File('update.log');
-      if (!file.existsSync()) return Response.ok(jsonEncode({'log': ''}), headers: {'content-type': 'application/json'});
+      if (!file.existsSync()) return Response.ok(jsonEncode({'lines': [], 'last_update_status': lastUpdateStatus, 'last_update_message': lastUpdateMessage, 'enabled': autoUpdateEnabled}), headers: {'content-type': 'application/json'});
       final content = await file.readAsString();
-      return Response.ok(jsonEncode({'log': content}), headers: {'content-type': 'application/json'});
+      final lines = content.split(RegExp(r'\r?\n')).where((l) => l.trim().isNotEmpty).toList();
+      return Response.ok(jsonEncode({'lines': lines, 'last_update_status': lastUpdateStatus, 'last_update_message': lastUpdateMessage, 'last_update_started': lastUpdateStarted?.toIso8601String(), 'enabled': autoUpdateEnabled}), headers: {'content-type': 'application/json'});
     } catch (e) {
       return Response(500, body: 'Error reading log');
     }
   });
 
+  // (Admin HTML UI removed; admin endpoints remain accessible via API)
+
   // Admin: get/set auto-update status
   router.get('/admin/auto_update', (Request req) async {
     final requester = await userFromRequest(req);
     if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
-    return Response.ok(jsonEncode({'enabled': _autoUpdateEnabled}), headers: {'content-type': 'application/json'});
+    return Response.ok(jsonEncode({'enabled': autoUpdateEnabled}), headers: {'content-type': 'application/json'});
   });
 
   router.post('/admin/auto_update', (Request req) async {
@@ -686,8 +721,8 @@ Handler createHandler() {
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final enabled = body['enabled'] as bool?;
     if (enabled == null) return Response(400, body: 'Missing enabled flag');
-    _saveAutoUpdate(enabled);
-    return Response.ok(jsonEncode({'ok': true, 'enabled': _autoUpdateEnabled}), headers: {'content-type': 'application/json'});
+    saveAutoUpdate(enabled);
+    return Response.ok(jsonEncode({'ok': true, 'enabled': autoUpdateEnabled}), headers: {'content-type': 'application/json'});
   });
 
   // Admin: force immediate update (git pull / pub get / restart)
@@ -696,7 +731,7 @@ Handler createHandler() {
     if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
     // run update asynchronously; endpoint will return before exiting
     Future(() async {
-      await _performUpdate();
+      await performUpdate();
     });
     return Response.ok(jsonEncode({'ok': true, 'message': 'Update started'}), headers: {'content-type': 'application/json'});
   });
