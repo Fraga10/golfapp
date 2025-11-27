@@ -1,3 +1,18 @@
+.dart_tool/
+.packages
+.buildlog/
+build/
+.idea/
+.vscode/
+*.iml
+*.log
+*.tmp
+**/server/.env
+**/server/update.log
+.DS_Store
+/.flutter-plugins
+/.flutter-plugins-dependencies
+pubspec.lock
 # Miscellaneous
 *.class
 *.log
