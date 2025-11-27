@@ -65,6 +65,28 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           _activePlayer ??= p;
         }
       }
+      // fetch game metadata to initialize mode (e.g., Pitch & Putt)
+      try {
+        final games = await Api.getGames();
+        final me = games.firstWhere((g) => (g['id'] as int) == widget.gameId, orElse: () => <String, dynamic>{});
+        if (me.isNotEmpty) {
+          final mode = (me['mode'] as String?) ?? 'standard';
+          setState(() {
+            _pitchMode = mode == 'pitch';
+          });
+          if (_pitchMode) {
+            // create an initial round if none exists
+            try {
+              final res = await Api.createRound(widget.gameId);
+              final rid = res['id'] as int? ?? (res['round_id'] as int?);
+              setState(() {
+                _currentRoundId = rid;
+                _currentHole = 1;
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
     } catch (_) {}
     final channel = _channel = Api.wsForGame(widget.gameId);
     _sub = channel.stream.listen((data) {
@@ -392,44 +414,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                       : null,
                 ),
                 const SizedBox(width: 12),
-                // Pitch & Putt toggle
-                Row(
-                  children: [
-                    const Text('Pitch'),
-                    const SizedBox(width: 6),
-                    Switch(
-                      value: _pitchMode,
-                      onChanged: (v) async {
-                        if (v) {
-                          // enabling pitch mode: create a round on server
-                          try {
-                            final res = await Api.createRound(widget.gameId);
-                            if (!mounted) return;
-                            if (!mounted) return;
-                            final rid = res['id'] as int? ?? (res['round_id'] as int?);
-                            setState(() {
-                              _pitchMode = true;
-                              _currentRoundId = rid;
-                              _currentHole = 1;
-                            });
-                            _saveCache();
-                            // ignore: use_build_context_synchronously
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Pitch ligado — round $rid criado')));
-                          } catch (e) {
-                            if (!mounted) return;
-                            // ignore: use_build_context_synchronously
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a criar round: $e')));
-                          }
-                        } else {
-                          // disable pitch mode locally
-                          setState(() {
-                            _pitchMode = false;
-                            _currentRoundId = null;
-                          });
-                        }
-                      },
-                    ),
-                  ],
+                // Show game mode (Pitch & Putt games are initialized from game metadata)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12.0),
+                  child: Text('Modo: ${_pitchMode ? 'Pitch & Putt' : 'Standard'}'),
                 ),
                 const Spacer(),
                 Text('Tacadas: $_strokesToAdd'),

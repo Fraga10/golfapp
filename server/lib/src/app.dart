@@ -214,7 +214,7 @@ Handler createHandler() {
   router.get('/ping', (Request req) => Response.ok('pong', headers: {'content-type': 'text/plain'}));
 
   router.get('/games', (Request req) async {
-    final res = await DB.conn.query('SELECT g.id, g.course, g.date, g.holes, g.status, g.created_by, u.name FROM games g LEFT JOIN users u ON g.created_by = u.id ORDER BY g.id DESC');
+    final res = await DB.conn.query('SELECT g.id, g.course, g.date, g.holes, g.status, g.mode, g.created_by, u.name FROM games g LEFT JOIN users u ON g.created_by = u.id ORDER BY g.id DESC');
     final games = res.map((row) {
       return {
         'id': row[0],
@@ -222,8 +222,9 @@ Handler createHandler() {
         'date': (row[2] as DateTime).toIso8601String(),
         'holes': row[3],
         'status': row[4],
-        'created_by': row[5],
-        'created_by_name': row[6],
+        'mode': row[5],
+        'created_by': row[6],
+        'created_by_name': row[7],
       };
     }).toList();
     return Response.ok(jsonEncode(games), headers: {'content-type': 'application/json'});
@@ -250,6 +251,7 @@ Handler createHandler() {
     final course = body['course'] as String? ?? 'Unknown';
     final date = body['date'] as String? ?? DateTime.now().toIso8601String();
     final holes = body['holes'] ?? 18;
+    final mode = body['mode'] as String? ?? 'standard';
     final status = body['status'] as String? ?? 'pending';
 
     final requester = await userFromRequest(req);
@@ -259,13 +261,13 @@ Handler createHandler() {
     late List res;
     if (createdBy != null) {
       res = await DB.conn.query(
-        'INSERT INTO games (course, date, holes, status, created_by) VALUES (@course, @date, @holes, @status, @created_by) RETURNING id',
-        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status, 'created_by': createdBy},
+        'INSERT INTO games (course, date, holes, status, mode, created_by) VALUES (@course, @date, @holes, @status, @mode, @created_by) RETURNING id',
+        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status, 'mode': mode, 'created_by': createdBy},
       );
     } else {
       res = await DB.conn.query(
-        'INSERT INTO games (course, date, holes, status) VALUES (@course, @date, @holes, @status) RETURNING id',
-        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status},
+        'INSERT INTO games (course, date, holes, status, mode) VALUES (@course, @date, @holes, @status, @mode) RETURNING id',
+        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status, 'mode': mode},
       );
     }
     final id = res.first[0] as int;

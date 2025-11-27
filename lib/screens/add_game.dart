@@ -21,6 +21,8 @@ class _AddGameScreenState extends State<AddGameScreen> {
   final _playersCtrl = TextEditingController();
   // store per-player per-hole strokes when building a past game
   final Map<String, Map<int, int>> _playerStrokes = {};
+  String _gameMode = 'standard';
+  String _gameFlow = 'live';
 
   @override
   void dispose() {
@@ -50,7 +52,15 @@ class _AddGameScreenState extends State<AddGameScreen> {
       }
       final status = _isPast ? 'finished' : 'active';
       final holes = _isPast ? (int.tryParse(_holesCtrl.text) ?? _selectedHoles) : null;
-      final id = await Api.createGame(_courseCtrl.text.trim(), _date, holes: holes, status: status, players: players.isNotEmpty ? players : null);
+      final id = await Api.createGame(
+        _courseCtrl.text.trim(),
+        _date,
+        holes: holes,
+        status: status,
+        players: players.isNotEmpty ? players : null,
+        mode: _gameMode,
+        flow: _gameFlow,
+      );
       if (!mounted) return;
       Navigator.pop(context, id);
     } catch (e) {
@@ -88,14 +98,38 @@ class _AddGameScreenState extends State<AddGameScreen> {
                 decoration: const InputDecoration(labelText: 'Campo'),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Insira o nome do campo' : null,
               ),
+              SwitchListTile(
+                title: const Text('Jogo passado'),
+                value: _isPast,
+                onChanged: (v) => setState(() => _isPast = v),
+              ),
               Row(
                 children: [
                   Expanded(child: Text('Tipo:')),
                   Expanded(
-                    child: SwitchListTile(
-                      title: Text(_isPast ? 'Passado' : 'Live'),
-                      value: _isPast,
-                      onChanged: (v) => setState(() => _isPast = v),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: _gameMode,
+                          decoration: const InputDecoration(labelText: 'Modo de Jogo'),
+                          items: const [
+                            DropdownMenuItem(value: 'standard', child: Text('Standard')),
+                            DropdownMenuItem(value: 'pitch', child: Text('Pitch & Putt')),
+                          ],
+                          onChanged: (v) => setState(() => _gameMode = v ?? 'standard'),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          initialValue: _gameFlow,
+                          decoration: const InputDecoration(labelText: 'Fluxo'),
+                          items: const [
+                            DropdownMenuItem(value: 'live', child: Text('Live')),
+                            DropdownMenuItem(value: 'import', child: Text('Import')),
+                          ],
+                          onChanged: (v) => setState(() => _gameFlow = v ?? 'live'),
+                        ),
+                      ],
                     ),
                   ),
                 ],

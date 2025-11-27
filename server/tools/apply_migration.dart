@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:golfe_server/src/db.dart';
 
 Future<void> main(List<String> args) async {
-  final path = args.isNotEmpty ? args[0] : 'migrations/20251127_add_rounds.sql';
+  final path = args.isNotEmpty ? args[0] : 'migrations/init.sql';
   final file = File(path);
   if (!file.existsSync()) {
     stderr.writeln('Migration file not found: ${file.path}');

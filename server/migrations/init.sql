@@ -1,4 +1,5 @@
 -- Initial schema for Golfe server
+-- Consolidated initial schema for Golfe server
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -14,7 +15,8 @@ CREATE TABLE IF NOT EXISTS games (
   holes INT NOT NULL DEFAULT 18,
   status TEXT NOT NULL DEFAULT 'pending', -- pending|active|finished
   created_by INT REFERENCES users(id),
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  mode TEXT DEFAULT 'standard'
 );
 
 CREATE TABLE IF NOT EXISTS game_players (
@@ -25,11 +27,21 @@ CREATE TABLE IF NOT EXISTS game_players (
   handicap INT
 );
 
+CREATE TABLE IF NOT EXISTS rounds (
+  id SERIAL PRIMARY KEY,
+  game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  round_number INTEGER NOT NULL,
+  created_by INTEGER NULL REFERENCES users(id),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ NULL
+);
+
 CREATE TABLE IF NOT EXISTS strokes (
   id SERIAL PRIMARY KEY,
   game_id INT REFERENCES games(id) ON DELETE CASCADE,
   player_name TEXT NOT NULL,
   hole_number INT NOT NULL,
   strokes INT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  round_id INTEGER NULL REFERENCES rounds(id) ON DELETE SET NULL
 );

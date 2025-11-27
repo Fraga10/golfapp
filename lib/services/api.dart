@@ -36,10 +36,12 @@ class Api {
     throw Exception('Failed to load games: \\$res');
   }
 
-  static Future<int> createGame(String course, DateTime date, {int? holes, String? status, List<Map<String, dynamic>>? players}) async {
+  static Future<int> createGame(String course, DateTime date, {int? holes, String? status, List<Map<String, dynamic>>? players, String? mode, String? flow}) async {
     final body = <String, dynamic>{'course': course, 'date': date.toUtc().toIso8601String()};
     if (holes != null) body['holes'] = holes;
     if (status != null) body['status'] = status;
+    if (mode != null) body['mode'] = mode;
+    if (flow != null) body['flow'] = flow;
     if (players != null) body['players'] = players;
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
