@@ -1,4 +1,4 @@
-﻿name: golfe_server
+name: golfe_server
 description: Server for Golfe app (REST + WebSocket using Postgres)
 version: 0.1.0
 environment:

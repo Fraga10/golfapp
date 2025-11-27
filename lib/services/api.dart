@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -157,7 +157,7 @@ class Api {
     throw Exception('Failed to set auto-update: ${res.statusCode}');
   }
 
-  // Admin: trigger an immediate update (git pull / pub get) ÔÇö server will exit to allow restart
+  // Admin: trigger an immediate update (git pull / pub get) — server will exit to allow restart
   static Future<Map<String, dynamic>> triggerUpdate() async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);

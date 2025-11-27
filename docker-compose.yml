@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  golfe-backend:
+    image: ghcr.io/Fraga10/golfe:latest
+    container_name: golfe-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - server/.env
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    volumes:
+      - ./server/update.log:/app/update.log

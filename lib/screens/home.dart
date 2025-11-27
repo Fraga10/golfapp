@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/game.dart';
 import 'add_game.dart';
@@ -35,7 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Apagar jogo?'),
-        content: const Text('Tem a certeza que deseja apagar este jogo? Esta a├º├úo n├úo pode ser desfeita.'),
+        content: const Text('Tem a certeza que deseja apagar este jogo? Esta ação não pode ser desfeita.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Apagar')),
@@ -59,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Golfe ÔÇö Meus Jogos'),
+        title: const Text('Golfe — Meus Jogos'),
         actions: [
           IconButton(
             icon: const Icon(Icons.bar_chart),
@@ -108,7 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
               final status = map['status'] as String? ?? '';
               return ListTile(
                 title: Text(game.course),
-                subtitle: Text('${DateFormat.yMMMd().format(game.date)} ÔÇó ${status == 'active' ? 'din├ómico' : '${game.holes} buracos'}'),
+                subtitle: Text('${DateFormat.yMMMd().format(game.date)} • ${status == 'active' ? 'dinâmico' : '${game.holes} buracos'}'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -126,7 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       return IconButton(
                         icon: const Icon(Icons.delete),
                         onPressed: canDelete ? () => _confirmAndDelete(game.id) : null,
-                        tooltip: canDelete ? 'Apagar' : 'Sem permiss├úo',
+                        tooltip: canDelete ? 'Apagar' : 'Sem permissão',
                       );
                     }),
                   ],
