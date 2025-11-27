@@ -24,6 +24,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   int _currentHole = 1;
   int _strokesToAdd = 1;
   String? _activePlayer;
+  bool _pitchMode = false;
+  int? _currentRoundId;
+  // Track recent local writes to avoid showing duplicates when the server echoes the stroke
+  final Set<String> _recentLocalWrites = {};
   // player -> hole -> strokes
   final Map<String, Map<int, int>> _scores = {};
 
@@ -70,6 +74,13 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           final player = msg['player_name'] as String? ?? 'Unknown';
           final hole = (msg['hole_number'] as num?)?.toInt() ?? 1;
           final strokes = (msg['strokes'] as num?)?.toInt() ?? 1;
+          final round = msg['round_id'] is int ? msg['round_id'] as int : (msg['round_id'] != null ? int.tryParse(msg['round_id'].toString()) : null);
+          final dedupeKey = '$player|$hole|$strokes|${round ?? ''}';
+          if (_recentLocalWrites.contains(dedupeKey)) {
+            // already applied locally — ignore this echo and remove dedupe marker
+            _recentLocalWrites.remove(dedupeKey);
+            return;
+          }
           setState(() {
             final p = _scores.putIfAbsent(player, () => <int, int>{});
             p[hole] = (p[hole] ?? 0) + strokes;
@@ -124,21 +135,31 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   Future<void> _addStroke() async {
     // For demo: add a fixed stroke event
     try {
-      final messenger = ScaffoldMessenger.of(context);
       final player = _activePlayer ?? 'Jogador';
       if (player.isEmpty) {
         if (!mounted) return;
-        messenger.showSnackBar(const SnackBar(content: Text('Selecione um jogador para marcar')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione um jogador para marcar')));
         return;
       }
-      await Api.addStroke(widget.gameId, player, _currentHole, _strokesToAdd);
+      await Api.addStroke(widget.gameId, player, _currentHole, _strokesToAdd, roundId: _currentRoundId);
       if (!mounted) return;
+      // Update UI immediately as a fallback in case the server's websocket
+      // broadcast is delayed or not received. The canonical `game_state`
+      // from the server will later replace this if needed.
       setState(() {
+        final p = _scores.putIfAbsent(player, () => <int, int>{});
+        p[_currentHole] = (p[_currentHole] ?? 0) + _strokesToAdd;
         _events.insert(0, 'Enviado: $player: hole $_currentHole -> $_strokesToAdd');
       });
+      _saveCache();
+      // add dedupe key so when server echoes the stroke we don't double-apply
+      final dedupeKey = '$player|$_currentHole|$_strokesToAdd|${_currentRoundId ?? ''}';
+      _recentLocalWrites.add(dedupeKey);
+      final messenger = ScaffoldMessenger.of(context);
       messenger.showSnackBar(const SnackBar(content: Text('Stroke enviado')));
-      // auto-advance hole and initialize zeros; if holes == 0 we treat as dynamic (no upper bound)
-      final shouldAdvance = widget.holes == 0 || _currentHole < widget.holes;
+      // auto-advance hole and initialize zeros; respect game's holes when set, otherwise allow up to 99
+      final maxAllowedHole = widget.holes > 0 ? widget.holes : 99;
+      final shouldAdvance = _currentHole < maxAllowedHole;
       if (shouldAdvance) {
         final newHole = _currentHole + 1;
         setState(() {
@@ -146,9 +167,47 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           _strokesToAdd = 1;
           for (final p in _scores.keys) {
             _scores[p] = _scores[p] ?? <int, int>{};
-            _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
+            if (newHole <= maxAllowedHole) _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
           }
         });
+      }
+      // If in pitch mode and we reached hole 3, ask to continue or end round
+      if (_pitchMode && _currentHole == 3) {
+        // prompt the user
+        final playMore = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+          title: const Text('Round terminado'),
+          content: const Text('Queres jogar mais um round?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Não, acabar')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim, próximo')),
+          ],
+        ));
+        if (playMore == true) {
+          try {
+            final res = await Api.createRound(widget.gameId);
+            final rid = res['id'] as int? ?? (res['round_id'] as int?);
+            setState(() {
+              _currentRoundId = rid;
+              _currentHole = 1;
+            });
+            _saveCache();
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a criar round: $e')));
+          }
+        } else {
+          try {
+            if (_currentRoundId != null) {
+              await Api.completeRound(widget.gameId, _currentRoundId!);
+            }
+            final stats = await Api.finalizeGame(widget.gameId);
+            if (!mounted) return;
+            await showDialog(context: context, builder: (_) => AlertDialog(title: const Text('Jogo finalizado'), content: SingleChildScrollView(child: Text('Vencedor: ${stats['winner']}\nTotals: ${stats['totals']}')), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
+          } catch (e) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a finalizar: $e')));
+          }
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -158,7 +217,6 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
 
   Future<void> _invitePlayer() async {
     try {
-      final messenger = ScaffoldMessenger.of(context);
       List<Map<String, dynamic>> users = [];
       var allowManual = false;
       try {
@@ -201,7 +259,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       final ok = await Api.addPlayer(widget.gameId, pname);
       if (!ok) {
         if (!mounted) return;
-        messenger.showSnackBar(const SnackBar(content: Text('Erro ao convidar')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Erro ao convidar')));
         return;
       }
       setState(() {
@@ -210,7 +268,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       });
       _saveCache();
       if (!mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text('Convidado: $sel')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Convidado: $sel')));
     } catch (e) {
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
@@ -279,6 +337,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final int maxAllowedHole = widget.holes > 0 ? widget.holes : 99;
     return Scaffold(
       appBar: AppBar(title: Text('Live — ${widget.course}')),
       body: Column(
@@ -316,17 +375,61 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.add),
-                  onPressed: () {
-                    final newHole = _currentHole + 1;
-                    setState(() {
-                      _currentHole = newHole;
-                      _strokesToAdd = 1;
-                      for (final p in _scores.keys) {
-                        _scores[p] = _scores[p] ?? <int, int>{};
-                        _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
-                      }
-                    });
-                  },
+                  onPressed: _currentHole < maxAllowedHole
+                      ? () {
+                          final newHole = _currentHole + 1;
+                          setState(() {
+                            _currentHole = newHole;
+                            _strokesToAdd = 1;
+                            for (final p in _scores.keys) {
+                              _scores[p] = _scores[p] ?? <int, int>{};
+                              if (newHole <= maxAllowedHole) {
+                                _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
+                              }
+                            }
+                          });
+                        }
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                // Pitch & Putt toggle
+                Row(
+                  children: [
+                    const Text('Pitch'),
+                    const SizedBox(width: 6),
+                    Switch(
+                      value: _pitchMode,
+                      onChanged: (v) async {
+                        if (v) {
+                          // enabling pitch mode: create a round on server
+                          try {
+                            final res = await Api.createRound(widget.gameId);
+                            if (!mounted) return;
+                            if (!mounted) return;
+                            final rid = res['id'] as int? ?? (res['round_id'] as int?);
+                            setState(() {
+                              _pitchMode = true;
+                              _currentRoundId = rid;
+                              _currentHole = 1;
+                            });
+                            _saveCache();
+                            // ignore: use_build_context_synchronously
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Pitch ligado — round $rid criado')));
+                          } catch (e) {
+                            if (!mounted) return;
+                            // ignore: use_build_context_synchronously
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a criar round: $e')));
+                          }
+                        } else {
+                          // disable pitch mode locally
+                          setState(() {
+                            _pitchMode = false;
+                            _currentRoundId = null;
+                          });
+                        }
+                      },
+                    ),
+                  ],
                 ),
                 const Spacer(),
                 Text('Tacadas: $_strokesToAdd'),

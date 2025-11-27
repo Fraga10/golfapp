@@ -40,7 +40,6 @@ class _UsersScreenState extends State<UsersScreen> {
     final nameCtrl = TextEditingController();
     final passCtrl = TextEditingController();
     String role = 'viewer';
-    final messenger = ScaffoldMessenger.of(context);
     final res = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (_) => AlertDialog(
@@ -63,7 +62,7 @@ class _UsersScreenState extends State<UsersScreen> {
       try {
         await Api.createUser(res['name'], res['password'], role: res['role']);
         if (!mounted) return;
-        messenger.showSnackBar(const SnackBar(content: Text('Utilizador criado')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Utilizador criado')));
         _load();
       } catch (e) {
         if (!mounted) return;
@@ -153,22 +152,21 @@ class _UsersScreenState extends State<UsersScreen> {
                       value: _autoUpdateEnabled ?? false,
                       onChanged: _autoUpdateEnabled == null ? null : (v) async {
                         try {
-                          final messenger = ScaffoldMessenger.of(context);
                           final newVal = await Api.setAutoUpdate(v);
                           if (!mounted) return;
                           setState(() => _autoUpdateEnabled = newVal);
-                          messenger.showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
+                          // ignore: use_build_context_synchronously
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
                         } catch (e) {
                           if (!mounted) return;
-                          final messenger = ScaffoldMessenger.of(context);
-                          messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
+                          // ignore: use_build_context_synchronously
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
                         }
                       },
                     ),
                     Row(children: [
                       ElevatedButton(
                         onPressed: () async {
-                          final messenger = ScaffoldMessenger.of(context);
                           final ok = await showDialog<bool>(
                             context: context,
                             builder: (_) => AlertDialog(
@@ -184,11 +182,12 @@ class _UsersScreenState extends State<UsersScreen> {
                           try {
                             final res = await Api.triggerUpdate();
                             if (!mounted) return;
-                            messenger.showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
+                            // ignore: use_build_context_synchronously
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
                           } catch (e) {
                             if (!mounted) return;
-                            final messenger = ScaffoldMessenger.of(context);
-                            messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
+                            // ignore: use_build_context_synchronously
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
                           }
                         },
                         child: const Text('Trigger Update'),
@@ -201,8 +200,8 @@ class _UsersScreenState extends State<UsersScreen> {
                           setState(() => _updateLog = log);
                         } catch (e) {
                           if (!mounted) return;
-                          final messenger = ScaffoldMessenger.of(context);
-                          messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
+                          // ignore: use_build_context_synchronously
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
                         }
                       }, child: const Text('Atualizar Log')),
                     ])

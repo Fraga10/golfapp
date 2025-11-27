@@ -58,14 +58,41 @@ class Api {
     return res.statusCode == 200;
   }
 
-  static Future<Map<String, dynamic>> addStroke(int gameId, String playerName, int holeNumber, int strokes, {bool overwrite = false}) async {
+  static Future<Map<String, dynamic>> addStroke(int gameId, String playerName, int holeNumber, int strokes, {int? roundId, bool overwrite = false}) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final body = jsonEncode({'player_name': playerName, 'hole_number': holeNumber, 'strokes': strokes, 'overwrite': overwrite});
-    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/strokes'), headers: headers, body: body);
+    final bodyMap = {'player_name': playerName, 'hole_number': holeNumber, 'strokes': strokes, 'overwrite': overwrite};
+    if (roundId != null) bodyMap['round_id'] = roundId;
+    // optional round_id may be attached by client
+    // caller may set bodyMap['round_id'] before JSON encoding
+    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/strokes'), headers: headers, body: jsonEncode(bodyMap));
     if (res.statusCode != 201) {
       throw Exception('Failed to add stroke: \\$res');
     }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> createRound(int gameId) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/rounds'), headers: headers, body: jsonEncode({}));
+    if (res.statusCode != 201) throw Exception('Failed to create round: ${res.statusCode}');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> completeRound(int gameId, int roundId) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.patch(Uri.parse('$baseUrl/games/$gameId/rounds/$roundId/complete'), headers: headers, body: jsonEncode({}));
+    if (res.statusCode != 200) throw Exception('Failed to complete round: ${res.statusCode}');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> finalizeGame(int gameId) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/finalize'), headers: headers, body: jsonEncode({}));
+    if (res.statusCode != 200) throw Exception('Failed to finalize game: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 

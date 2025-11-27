@@ -30,5 +30,5 @@ Future<void> main(List<String> args) async {
       .addHandler(createHandler());
 
   final server = await io.serve(handler, InternetAddress.anyIPv4, port);
-  print('Server listening on port ${server.port}');
+  stderr.writeln('Server listening on port ${server.port}');
 }

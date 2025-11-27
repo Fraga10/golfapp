@@ -12,12 +12,11 @@ Future<void> main(List<String> args) async {
   for (final stmt in statements) {
     try {
       await DB.conn.execute(stmt);
-      print('Executed statement');
+      stderr.writeln('Executed statement');
     } catch (e) {
-      print('Error executing statement: $e');
+      stderr.writeln('Error executing statement: $e');
     }
   }
-
-  print('Migrations complete.');
+  stderr.writeln('Migrations complete.');
   await DB.conn.close();
 }

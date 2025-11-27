@@ -491,25 +491,89 @@ Handler createHandler() {
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final playerName = body['player_name'] as String? ?? 'Player';
     final holeNumber = body['hole_number'] as int? ?? 1;
+    final providedRoundId = body.containsKey('round_id') ? (body['round_id'] is int ? body['round_id'] as int : int.tryParse(body['round_id'].toString())) : null;
     final strokes = body['strokes'] as int? ?? 1;
     final overwrite = body['overwrite'] as bool? ?? false;
     final gid = int.parse(id);
+    // Determine or create round association. If client provided a round_id, validate it.
+    int? roundId = providedRoundId;
+    try {
+      if (roundId != null) {
+        final rr = await DB.conn.query('SELECT id FROM rounds WHERE id = @rid AND game_id = @gid', substitutionValues: {'rid': roundId, 'gid': gid});
+        if (rr.isEmpty) {
+          return Response(400, body: 'Invalid round_id for this game');
+        }
+      } else {
+        // find open round for this game (not finished)
+        final or = await DB.conn.query('SELECT id FROM rounds WHERE game_id = @gid AND finished_at IS NULL ORDER BY round_number DESC LIMIT 1', substitutionValues: {'gid': gid});
+        if (or.isNotEmpty) {
+          roundId = or.first[0] as int;
+        } else {
+          // no open round: create a new one automatically (round_number = max+1)
+          final rn = await DB.conn.query('SELECT COALESCE(MAX(round_number),0) + 1 FROM rounds WHERE game_id = @gid', substitutionValues: {'gid': gid});
+          final roundNumber = rn.first[0] as int;
+          final creatorRes = await DB.conn.query('SELECT created_by FROM games WHERE id = @gid', substitutionValues: {'gid': gid});
+          final createdBy = (creatorRes.isNotEmpty ? creatorRes.first[0] as int? : null);
+          final ins = await DB.conn.query('INSERT INTO rounds (game_id, round_number, created_by) VALUES (@gid, @rnum, @cb) RETURNING id', substitutionValues: {'gid': gid, 'rnum': roundNumber, 'cb': createdBy});
+          roundId = ins.first[0] as int;
+          // notify websockets about new round
+          final rpayload = jsonEncode({'type': 'round_created', 'game_id': gid, 'round_id': roundId, 'round_number': roundNumber, 'ts': DateTime.now().toIso8601String()});
+          final rsockets = _gameSockets[gid];
+          if (rsockets != null) {
+            for (final s in rsockets) {
+              try { s.sink.add(rpayload); } catch (_) {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      return Response(500, body: 'Error determining round: $e');
+    }
+
+    // If this stroke is attached to a round, for pitch rounds enforce hole numbers 1..3
+    try {
+      // ignore: unnecessary_null_comparison
+      if (roundId != null) {
+        // for rounds we expect the pitch format (holes 1..3)
+        if (holeNumber < 1 || holeNumber > 3) {
+          return Response(400, body: 'Invalid hole number for pitch round, must be 1..3');
+        }
+      } else {
+        // fallback: Validate hole number against the game's configured holes when present.
+        final gr = await DB.conn.query('SELECT holes FROM games WHERE id = @id', substitutionValues: {'id': gid});
+        int? gameHoles;
+        if (gr.isNotEmpty) gameHoles = gr.first[0] as int?;
+        final maxHoles = (gameHoles != null && gameHoles > 0) ? gameHoles : 99;
+        if (holeNumber < 1 || holeNumber > maxHoles) {
+          return Response(400, body: 'Invalid hole number, must be between 1 and $maxHoles');
+        }
+      }
+    } catch (_) {}
     final user = await userFromRequest(req);
     if (user == null) return Response.forbidden('Authentication required');
     final role = (user['role'] as String?) ?? 'viewer';
     // viewers cannot post strokes
     if (role == 'viewer') return Response.forbidden('Insufficient permissions');
-    // players can only post strokes for themselves
-    if (role == 'player' && (user['name'] as String) != playerName) {
-      return Response.forbidden('Players may only post strokes for themselves');
+    // players: allow posting strokes only if the posting user is a participant
+    // in this game, and the target player is also part of the same game.
+    if (role == 'player') {
+      final posterName = user['name'] as String;
+      // check poster is participant in this game
+      final posterRes = await DB.conn.query('SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p', substitutionValues: {'gid': gid, 'p': posterName});
+      final posterCount = (posterRes.first[0] as int?) ?? 0;
+      if (posterCount == 0) return Response.forbidden('Players must be participants of the game to post strokes');
+      // check target exists in game
+      final targetRes = await DB.conn.query('SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p', substitutionValues: {'gid': gid, 'p': playerName});
+      final targetCount = (targetRes.first[0] as int?) ?? 0;
+      if (targetCount == 0) return Response.forbidden('Target player not in game');
     }
     if (overwrite) {
       await DB.conn.transaction((ctx) async {
-        await ctx.query('DELETE FROM strokes WHERE game_id = @gid AND player_name = @player AND hole_number = @hole', substitutionValues: {'gid': gid, 'player': playerName, 'hole': holeNumber});
-        await ctx.query('INSERT INTO strokes (game_id, player_name, hole_number, strokes) VALUES (@gameId, @player, @hole, @strokes)', substitutionValues: {'gameId': gid, 'player': playerName, 'hole': holeNumber, 'strokes': strokes});
+        await ctx.query('DELETE FROM strokes WHERE game_id = @gid AND player_name = @player AND hole_number = @hole AND (round_id IS NULL OR round_id = @rid)', substitutionValues: {'gid': gid, 'player': playerName, 'hole': holeNumber, 'rid': roundId});
+        await ctx.query('INSERT INTO strokes (game_id, player_name, hole_number, strokes, round_id) VALUES (@gameId, @player, @hole, @strokes, @rid)', substitutionValues: {'gameId': gid, 'player': playerName, 'hole': holeNumber, 'strokes': strokes, 'rid': roundId});
       });
     } else {
-      await DB.conn.query('INSERT INTO strokes (game_id, player_name, hole_number, strokes) VALUES (@gameId, @player, @hole, @strokes)', substitutionValues: {'gameId': gid, 'player': playerName, 'hole': holeNumber, 'strokes': strokes});
+      await DB.conn.query('INSERT INTO strokes (game_id, player_name, hole_number, strokes, round_id) VALUES (@gameId, @player, @hole, @strokes, @rid)', substitutionValues: {'gameId': gid, 'player': playerName, 'hole': holeNumber, 'strokes': strokes, 'rid': roundId});
     }
 
     // Broadcast to websockets listeners of this game
@@ -554,6 +618,119 @@ Handler createHandler() {
     } catch (_) {}
 
     return Response(201, body: jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
+  });
+
+  // Create a new round for a game (Pitch & Putt round of 3 holes)
+  router.post('/games/<id|[0-9]+>/rounds', (Request req, String id) async {
+    final user = await userFromRequest(req);
+    if (user == null) return Response.forbidden('Authentication required');
+    final gid = int.parse(id);
+    try {
+      final rn = await DB.conn.query('SELECT COALESCE(MAX(round_number),0) + 1 FROM rounds WHERE game_id = @gid', substitutionValues: {'gid': gid});
+      final roundNumber = rn.first[0] as int;
+      final createdBy = user['id'] as int?;
+      final ins = await DB.conn.query('INSERT INTO rounds (game_id, round_number, created_by) VALUES (@gid, @rnum, @cb) RETURNING id', substitutionValues: {'gid': gid, 'rnum': roundNumber, 'cb': createdBy});
+      final roundId = ins.first[0] as int;
+      final payload = jsonEncode({'type': 'round_created', 'game_id': gid, 'round_id': roundId, 'round_number': roundNumber, 'ts': DateTime.now().toIso8601String()});
+      final sockets = _gameSockets[gid];
+      if (sockets != null) {
+        for (final s in sockets) {
+          try { s.sink.add(payload); } catch (_) {}
+        }
+      }
+      return Response(201, body: jsonEncode({'id': roundId, 'round_number': roundNumber}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error creating round: $e');
+    }
+  });
+
+  // Complete a round (set finished_at) and return round totals
+  router.patch('/games/<id|[0-9]+>/rounds/<rid|[0-9]+>/complete', (Request req, String id, String rid) async {
+    final user = await userFromRequest(req);
+    if (user == null) return Response.forbidden('Authentication required');
+    final gid = int.parse(id);
+    final roundId = int.parse(rid);
+    try {
+      // Only game creator may finalize (as requested)
+      final gr = await DB.conn.query('SELECT created_by FROM games WHERE id = @gid', substitutionValues: {'gid': gid});
+      final createdBy = gr.isNotEmpty ? gr.first[0] as int? : null;
+      if (createdBy == null || createdBy != (user['id'] as int?)) {
+        return Response.forbidden('Only game creator may complete rounds');
+      }
+      await DB.conn.query('UPDATE rounds SET finished_at = now() WHERE id = @rid AND game_id = @gid', substitutionValues: {'rid': roundId, 'gid': gid});
+      // compute totals for this round
+      final rows = await DB.conn.query('SELECT player_name, SUM(strokes) FROM strokes WHERE round_id = @rid GROUP BY player_name', substitutionValues: {'rid': roundId});
+      final Map<String, int> totals = {};
+      for (final r in rows) {
+        totals[r[0] as String] = (r[1] as int?) ?? 0;
+      }
+      final payload = jsonEncode({'type': 'round_completed', 'game_id': gid, 'round_id': roundId, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+      final sockets = _gameSockets[gid];
+      if (sockets != null) {
+        for (final s in sockets) {
+          try { s.sink.add(payload); } catch (_) {}
+        }
+      }
+      // broadcast canonical game_state
+      try {
+        final rows2 = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
+        final Map<String, Map<int, int>> players = {};
+        final Map<String, int> totalsAll = {};
+        for (final r in rows2) {
+          final pname = r[0] as String;
+          final hole = (r[1] as int);
+          final ssum = (r[2] as int);
+          players.putIfAbsent(pname, () => {})[hole] = ssum;
+          totalsAll[pname] = (totalsAll[pname] ?? 0) + ssum;
+        }
+        final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totalsAll, 'ts': DateTime.now().toIso8601String()});
+        if (sockets != null) {
+          for (final s in sockets) {
+            try { s.sink.add(statePayload); } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      return Response.ok(jsonEncode({'ok': true, 'totals': totals}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error completing round: $e');
+    }
+  });
+
+  // Finalize a game: only creator may finalize. Returns stats and winner (lowest strokes total)
+  router.post('/games/<id|[0-9]+>/finalize', (Request req, String id) async {
+    final user = await userFromRequest(req);
+    if (user == null) return Response.forbidden('Authentication required');
+    final gid = int.parse(id);
+    try {
+      final gr = await DB.conn.query('SELECT created_by FROM games WHERE id = @gid', substitutionValues: {'gid': gid});
+      final createdBy = gr.isNotEmpty ? gr.first[0] as int? : null;
+      if (createdBy == null || createdBy != (user['id'] as int?)) {
+        return Response.forbidden('Only game creator may finalize the game');
+      }
+      // compute totals across all rounds/strokes
+      final rows = await DB.conn.query('SELECT player_name, SUM(strokes) as total FROM strokes WHERE game_id = @gid GROUP BY player_name', substitutionValues: {'gid': gid});
+      final Map<String, int> totals = {};
+      for (final r in rows) {
+        totals[r[0] as String] = (r[1] as int?) ?? 0;
+      }
+      if (totals.isEmpty) return Response.ok(jsonEncode({'ok': true, 'message': 'No strokes recorded'}), headers: {'content-type': 'application/json'});
+      // determine winner by lowest total
+      String? winner;
+      int? best;
+      totals.forEach((k, v) {
+        if (best == null || v < best!) { best = v; winner = k; }
+      });
+      // mark game as finished
+      try { await DB.conn.query("UPDATE games SET status='finished' WHERE id = @gid", substitutionValues: {'gid': gid}); } catch (_) {}
+      final payload = jsonEncode({'type': 'game_finalized', 'game_id': gid, 'winner': winner, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+      final sockets = _gameSockets[gid];
+      if (sockets != null) {
+        for (final s in sockets) { try { s.sink.add(payload); } catch (_) {} }
+      }
+      return Response.ok(jsonEncode({'ok': true, 'winner': winner, 'totals': totals}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error finalizing game: $e');
+    }
   });
 
   // Add a player to an existing game (invite/accept)
