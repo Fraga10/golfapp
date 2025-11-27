@@ -1,0 +1,19 @@
+name: golfe_server
+description: Server for Golfe app (REST + WebSocket using Postgres)
+version: 0.1.0
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  shelf: ^1.4.0
+  shelf_router: ^1.1.4
+  shelf_web_socket: ^1.0.1
+  web_socket_channel: ^2.2.0
+  shelf_static: ^1.1.0
+  postgres: ^2.4.0
+  dotenv: ^4.0.0
+  convert: ^3.0.0
+  crypto: ^3.0.2
+
+dev_dependencies:
+  pedantic: ^1.11.1
