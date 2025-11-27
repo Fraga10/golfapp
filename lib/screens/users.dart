@@ -31,6 +31,7 @@ class _UsersScreenState extends State<UsersScreen> {
     final nameCtrl = TextEditingController();
     final passCtrl = TextEditingController();
     String role = 'viewer';
+    final messenger = ScaffoldMessenger.of(context);
     final res = await showDialog<Map<String, dynamic>?>(
       context: context,
       builder: (_) => AlertDialog(
@@ -52,10 +53,13 @@ class _UsersScreenState extends State<UsersScreen> {
     if (res != null) {
       try {
         await Api.createUser(res['name'], res['password'], role: res['role']);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Utilizador criado')));
+        if (!mounted) return;
+        messenger.showSnackBar(const SnackBar(content: Text('Utilizador criado')));
         _load();
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+        if (!mounted) return;
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
       }
     }
   }
@@ -63,10 +67,14 @@ class _UsersScreenState extends State<UsersScreen> {
   Future<void> _revoke(int id) async {
     try {
       final newKey = await Api.revokeUser(id);
+      if (!mounted) return;
       await showDialog(context: context, builder: (_) => AlertDialog(title: const Text('Nova API key'), content: SelectableText(newKey), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar'))]));
+      if (!mounted) return;
       _load();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
     }
   }
 
@@ -110,9 +118,13 @@ class _UsersScreenState extends State<UsersScreen> {
                     onPressed: () async {
                       if (current == null) {
                         final res = await Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-                        if (res != null) _load();
+                        if (res != null) {
+                          if (!mounted) return;
+                          _load();
+                        }
                       } else {
                         await Api.logout();
+                        if (!mounted) return;
                         _load();
                       }
                     },
@@ -132,19 +144,22 @@ class _UsersScreenState extends State<UsersScreen> {
                       value: _autoUpdateEnabled ?? false,
                       onChanged: _autoUpdateEnabled == null ? null : (v) async {
                         try {
+                          final messenger = ScaffoldMessenger.of(context);
                           final newVal = await Api.setAutoUpdate(v);
                           if (!mounted) return;
                           setState(() => _autoUpdateEnabled = newVal);
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
+                          messenger.showSnackBar(const SnackBar(content: Text('Auto-update setting updated')));
                         } catch (e) {
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                          final messenger = ScaffoldMessenger.of(context);
+                          messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
                         }
                       },
                     ),
                     Row(children: [
                       ElevatedButton(
                         onPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
                           final ok = await showDialog<bool>(
                             context: context,
                             builder: (_) => AlertDialog(
@@ -160,10 +175,11 @@ class _UsersScreenState extends State<UsersScreen> {
                           try {
                             final res = await Api.triggerUpdate();
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
+                            messenger.showSnackBar(SnackBar(content: Text('Update iniciado: ${res['message'] ?? ''}')));
                           } catch (e) {
                             if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                            final messenger = ScaffoldMessenger.of(context);
+                            messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
                           }
                         },
                         child: const Text('Trigger Update'),
@@ -176,7 +192,8 @@ class _UsersScreenState extends State<UsersScreen> {
                           setState(() => _updateLog = log);
                         } catch (e) {
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+                          final messenger = ScaffoldMessenger.of(context);
+                          messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
                         }
                       }, child: const Text('Atualizar Log')),
                     ])

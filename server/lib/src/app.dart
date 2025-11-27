@@ -194,7 +194,7 @@ Handler createHandler() {
   router.get('/ping', (Request req) => Response.ok('pong', headers: {'content-type': 'text/plain'}));
 
   router.get('/games', (Request req) async {
-    final res = await DB.conn.query('SELECT id, course, date, holes, status, created_at FROM games ORDER BY id DESC');
+    final res = await DB.conn.query('SELECT g.id, g.course, g.date, g.holes, g.status, g.created_by, u.name FROM games g LEFT JOIN users u ON g.created_by = u.id ORDER BY g.id DESC');
     final games = res.map((row) {
       return {
         'id': row[0],
@@ -202,13 +202,15 @@ Handler createHandler() {
         'date': (row[2] as DateTime).toIso8601String(),
         'holes': row[3],
         'status': row[4],
+        'created_by': row[5],
+        'created_by_name': row[6],
       };
     }).toList();
     return Response.ok(jsonEncode(games), headers: {'content-type': 'application/json'});
   });
 
   router.get('/games/<id|[0-9]+>', (Request req, String id) async {
-    final res = await DB.conn.query('SELECT id, course, date, holes, status, created_at FROM games WHERE id = @id', substitutionValues: {'id': int.parse(id)});
+    final res = await DB.conn.query('SELECT g.id, g.course, g.date, g.holes, g.status, g.created_by, u.name FROM games g LEFT JOIN users u ON g.created_by = u.id WHERE g.id = @id', substitutionValues: {'id': int.parse(id)});
     if (res.isEmpty) return Response.notFound('Game not found');
     final row = res.first;
     final game = {
@@ -217,6 +219,8 @@ Handler createHandler() {
       'date': (row[2] as DateTime).toIso8601String(),
       'holes': row[3],
       'status': row[4],
+      'created_by': row[5],
+      'created_by_name': row[6],
     };
     return Response.ok(jsonEncode(game), headers: {'content-type': 'application/json'});
   });
@@ -228,10 +232,22 @@ Handler createHandler() {
     final holes = body['holes'] ?? 18;
     final status = body['status'] as String? ?? 'pending';
 
-    final res = await DB.conn.query(
-      'INSERT INTO games (course, date, holes, status) VALUES (@course, @date, @holes, @status) RETURNING id',
-      substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status},
-    );
+    final requester = await userFromRequest(req);
+    final createdBy = requester != null ? requester['id'] as int : null;
+
+    // include created_by if we have an authenticated requester
+    late List res;
+    if (createdBy != null) {
+      res = await DB.conn.query(
+        'INSERT INTO games (course, date, holes, status, created_by) VALUES (@course, @date, @holes, @status, @created_by) RETURNING id',
+        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status, 'created_by': createdBy},
+      );
+    } else {
+      res = await DB.conn.query(
+        'INSERT INTO games (course, date, holes, status) VALUES (@course, @date, @holes, @status) RETURNING id',
+        substitutionValues: {'course': course, 'date': DateTime.parse(date), 'holes': holes, 'status': status},
+      );
+    }
     final id = res.first[0] as int;
 
     // optional players list to pre-populate players for past games
@@ -255,6 +271,18 @@ Handler createHandler() {
           } else if (p is String) {
             await DB.conn.query('INSERT INTO game_players (game_id, player_name) VALUES (@gid, @pname)', substitutionValues: {'gid': id, 'pname': p});
           }
+        }
+      }
+    }
+
+    // Ensure the creator is added as a player for the game (if authenticated)
+    if (createdBy != null) {
+      final creatorName = requester!['name'] as String? ?? '';
+      if (creatorName.isNotEmpty) {
+        final exists = await DB.conn.query('SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p', substitutionValues: {'gid': id, 'p': creatorName});
+        final cnt = (exists.first[0] as int?) ?? 0;
+        if (cnt == 0) {
+          await DB.conn.query('INSERT INTO game_players (game_id, player_name, player_id) VALUES (@gid, @p, @pid)', substitutionValues: {'gid': id, 'p': creatorName, 'pid': createdBy});
         }
       }
     }
@@ -483,7 +511,81 @@ Handler createHandler() {
       }
     }
 
+    // Broadcast full canonical game state (players -> hole -> strokes + totals)
+    try {
+      final rows = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
+      final Map<String, Map<int, int>> players = {};
+      final Map<String, int> totals = {};
+      for (final r in rows) {
+        final pname = r[0] as String;
+        final hole = (r[1] as int);
+        final ssum = (r[2] as int);
+        players.putIfAbsent(pname, () => {})[hole] = ssum;
+        totals[pname] = (totals[pname] ?? 0) + ssum;
+      }
+      final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+      if (sockets != null) {
+        for (final s in sockets) {
+          try {
+            s.sink.add(statePayload);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
     return Response(201, body: jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
+  });
+
+  // Add a player to an existing game (invite/accept)
+  router.post('/games/<id|[0-9]+>/players', (Request req, String id) async {
+    final user = await userFromRequest(req);
+    if (user == null) return Response.forbidden('Authentication required');
+    final role = (user['role'] as String?) ?? 'viewer';
+    if (role == 'viewer') return Response.forbidden('Insufficient permissions');
+    final gid = int.parse(id);
+    final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final playerName = (body['player_name'] as String?)?.trim();
+    if (playerName == null || playerName.isEmpty) return Response(400, body: 'Missing player_name');
+
+    // avoid duplicate
+    final exists = await DB.conn.query('SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p', substitutionValues: {'gid': gid, 'p': playerName});
+    final cnt = (exists.first[0] as int?) ?? 0;
+    if (cnt == 0) {
+      await DB.conn.query('INSERT INTO game_players (game_id, player_name) VALUES (@gid, @p)', substitutionValues: {'gid': gid, 'p': playerName});
+      // notify websockets
+      final payload = jsonEncode({'type': 'player_joined', 'game_id': gid, 'player_name': playerName, 'ts': DateTime.now().toIso8601String()});
+      final sockets = _gameSockets[gid];
+      if (sockets != null) {
+        for (final s in sockets) {
+          try {
+            s.sink.add(payload);
+          } catch (_) {}
+        }
+      }
+    }
+      // Also broadcast a canonical `game_state` to ensure all clients are in sync
+      final sockets = _gameSockets[gid];
+      try {
+        final rows = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
+        final Map<String, Map<int, int>> players = {};
+        final Map<String, int> totals = {};
+        for (final r in rows) {
+          final pname = r[0] as String;
+          final hole = (r[1] as int);
+          final ssum = (r[2] as int);
+          players.putIfAbsent(pname, () => {})[hole] = ssum;
+          totals[pname] = (totals[pname] ?? 0) + ssum;
+        }
+        final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+        if (sockets != null) {
+          for (final s in sockets) {
+            try {
+              s.sink.add(statePayload);
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    return Response(201, body: jsonEncode({'ok': true, 'player_name': playerName}), headers: {'content-type': 'application/json'});
   });
 
   // Delete game and its strokes
@@ -512,7 +614,40 @@ Handler createHandler() {
 
   // WebSocket endpoint for live updates per game
   router.get('/ws/games/<id|[0-9]+>', webSocketHandler((webSocket, req) {
-    final idStr = req.params['id']!;
+    // Log connection attempt (helpful for debugging client path issues)
+    try {
+      final logFile = File('ws_connections.log');
+      final info = req?.requestedUri?.toString() ?? 'null-requestUri';
+      logFile.writeAsStringSync('${DateTime.now().toIso8601String()} CONNECT $info\n', mode: FileMode.append);
+    } catch (_) {}
+
+    // Try to obtain id from route params first, then fall back to parsing the request path
+    String? idStr;
+    try {
+      idStr = req?.params['id'];
+    } catch (_) {
+      idStr = null;
+    }
+    if (idStr == null && req != null) {
+      try {
+        final path = req.requestedUri.path; // e.g. /ws/games/123
+        final m = RegExp(r'/ws/games/([0-9]+)').firstMatch(path);
+        if (m != null) idStr = m.group(1);
+      } catch (_) {
+        idStr = null;
+      }
+    }
+
+    if (idStr == null) {
+      try {
+        webSocket.sink.add(jsonEncode({'type': 'error', 'reason': 'missing game id'}));
+      } catch (_) {}
+      try {
+        webSocket.sink.close();
+      } catch (_) {}
+      return;
+    }
+
     final gid = int.parse(idStr);
     _gameSockets.putIfAbsent(gid, () => <WebSocketChannel>{}).add(webSocket);
     webSocket.stream.listen((message) {

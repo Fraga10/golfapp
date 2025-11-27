@@ -10,26 +10,33 @@ class LiveGameScreen extends StatefulWidget {
   final int gameId;
   final String course;
   final int holes;
-  const LiveGameScreen({super.key, required this.gameId, required this.course, this.holes = 18});
+  final List<String>? initialPlayers;
+  const LiveGameScreen({super.key, required this.gameId, required this.course, this.holes = 18, this.initialPlayers});
 
   @override
   State<LiveGameScreen> createState() => _LiveGameScreenState();
 }
 
 class _LiveGameScreenState extends State<LiveGameScreen> {
-  late WebSocketChannel _channel;
+  WebSocketChannel? _channel;
   final List<String> _events = [];
   StreamSubscription? _sub;
   int _currentHole = 1;
   int _strokesToAdd = 1;
+  String? _activePlayer;
   // player -> hole -> strokes
   final Map<String, Map<int, int>> _scores = {};
 
   @override
   void initState() {
     super.initState();
-    // load cached scores if present
+    // load cached scores if present (async)
+    _initCacheAndWs();
+  }
+
+  Future<void> _initCacheAndWs() async {
     try {
+      if (!Hive.isBoxOpen('live_cache')) await Hive.openBox('live_cache');
       final box = Hive.box('live_cache');
       final key = 'game_${widget.gameId}';
       if (box.containsKey(key)) {
@@ -47,9 +54,16 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           });
         }
       }
+      // ensure initial players (e.g., creator) are present immediately
+      if (widget.initialPlayers != null) {
+        for (final p in widget.initialPlayers!) {
+          _scores.putIfAbsent(p, () => <int, int>{});
+          _activePlayer ??= p;
+        }
+      }
     } catch (_) {}
-    _channel = Api.wsForGame(widget.gameId);
-    _sub = _channel.stream.listen((data) {
+    final channel = _channel = Api.wsForGame(widget.gameId);
+    _sub = channel.stream.listen((data) {
       try {
         final msg = data is String ? jsonDecode(data) : data;
         if (msg is Map && msg['type'] == 'stroke') {
@@ -61,6 +75,33 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             p[hole] = (p[hole] ?? 0) + strokes;
             final ts = msg['ts'] ?? '';
             _events.insert(0, '$ts $player: hole $hole -> $strokes');
+          });
+        } else if (msg is Map && msg['type'] == 'game_state') {
+          // Canonical state from server: replace local scores
+          try {
+            final players = (msg['players'] as Map?)?.cast<String, dynamic>() ?? {};
+            setState(() {
+              _scores.clear();
+              players.forEach((player, holesMap) {
+                final Map<int, int> hm = {};
+                if (holesMap is Map) {
+                  holesMap.forEach((k, v) {
+                    hm[int.parse(k.toString())] = (v as num).toInt();
+                  });
+                }
+                _scores[player] = hm;
+              });
+              _events.insert(0, '${msg['ts'] ?? ''} game_state sync');
+            });
+            _saveCache();
+          } catch (e) {
+            setState(() => _events.insert(0, 'game_state parse error: $e'));
+          }
+        } else if (msg is Map && msg['type'] == 'player_joined') {
+          final pname = msg['player_name'] as String? ?? '';
+          setState(() {
+            _scores.putIfAbsent(pname, () => <int, int>{});
+            _events.insert(0, '${msg['ts'] ?? ''} player_joined: $pname');
           });
         } else {
           setState(() => _events.insert(0, data.toString()));
@@ -76,22 +117,26 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   @override
   void dispose() {
     _sub?.cancel();
-    _channel.sink.close();
+    _channel?.sink.close();
     super.dispose();
   }
 
   Future<void> _addStroke() async {
     // For demo: add a fixed stroke event
     try {
-      await Api.addStroke(widget.gameId, 'Jogador', _currentHole, _strokesToAdd);
+      final messenger = ScaffoldMessenger.of(context);
+      final player = _activePlayer ?? 'Jogador';
+      if (player.isEmpty) {
+        if (!mounted) return;
+        messenger.showSnackBar(const SnackBar(content: Text('Selecione um jogador para marcar')));
+        return;
+      }
+      await Api.addStroke(widget.gameId, player, _currentHole, _strokesToAdd);
       if (!mounted) return;
       setState(() {
-        final p = _scores.putIfAbsent('Jogador', () => <int, int>{});
-        p[_currentHole] = (p[_currentHole] ?? 0) + _strokesToAdd;
-        _events.insert(0, 'Enviado: Jogador: hole $_currentHole -> $_strokesToAdd');
+        _events.insert(0, 'Enviado: $player: hole $_currentHole -> $_strokesToAdd');
       });
-      _saveCache();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Stroke enviado')));
+      messenger.showSnackBar(const SnackBar(content: Text('Stroke enviado')));
       // auto-advance hole and initialize zeros; if holes == 0 we treat as dynamic (no upper bound)
       final shouldAdvance = widget.holes == 0 || _currentHole < widget.holes;
       if (shouldAdvance) {
@@ -108,6 +153,68 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+    }
+  }
+
+  Future<void> _invitePlayer() async {
+    try {
+      final messenger = ScaffoldMessenger.of(context);
+      List<Map<String, dynamic>> users = [];
+      var allowManual = false;
+      try {
+        users = await Api.listUsers();
+      } catch (_) {
+        // listing users may be forbidden for non-admins or unavailable; fall back to manual entry
+        allowManual = true;
+      }
+      final existing = _scores.keys.toSet();
+      final current = Api.currentUser();
+      final filtered = users.where((u) {
+        final name = u['name'] as String? ?? '';
+        if (name.isEmpty) return false;
+        if (existing.contains(name)) return false;
+        if (current != null && current['name'] == name) return false;
+        return true;
+      }).toList();
+      String? sel;
+      if (filtered.isNotEmpty && !allowManual) {
+        if (!mounted) return;
+        sel = await showDialog<String?>(context: context, builder: (_) => SimpleDialog(title: const Text('Convidar utilizador'), children: filtered.map((u) {
+          final name = u['name'] as String? ?? '';
+          return SimpleDialogOption(onPressed: () => Navigator.pop(context, name), child: Text(name));
+        }).toList()));
+      } else {
+        // fallback: ask user to type a username to invite
+        final ctrl = TextEditingController();
+        if (!mounted) return;
+        sel = await showDialog<String?>(context: context, builder: (_) => AlertDialog(
+          title: const Text('Convidar utilizador (manual)'),
+          content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nome de utilizador')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, null), child: const Text('Cancelar')),
+            TextButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Convidar')),
+          ],
+        ));
+      }
+      if (sel == null) return;
+      final pname = sel;
+      final ok = await Api.addPlayer(widget.gameId, pname);
+      if (!ok) {
+        if (!mounted) return;
+        messenger.showSnackBar(const SnackBar(content: Text('Erro ao convidar')));
+        return;
+      }
+      setState(() {
+        _scores.putIfAbsent(pname, () => <int, int>{});
+        _activePlayer ??= pname;
+      });
+      _saveCache();
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Convidado: $sel')));
+    } catch (e) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(SnackBar(content: Text('Erro: $e')));
     }
   }
 
@@ -160,10 +267,12 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         });
         _saveCache();
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tacadas atualizadas')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(const SnackBar(content: Text('Tacadas atualizadas')));
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao actualizar: $e')));
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(SnackBar(content: Text('Erro ao actualizar: $e')));
       }
     }
   }
@@ -179,6 +288,14 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             child: Row(
               children: [
                 Text('Buraco: $_currentHole / ${widget.holes == 0 ? '?' : widget.holes}'),
+                const SizedBox(width: 12),
+                if (_scores.isNotEmpty)
+                  DropdownButton<String>(
+                    value: _activePlayer ?? (_scores.keys.isNotEmpty ? _scores.keys.first : null),
+                    hint: const Text('Selecionar jogador'),
+                    items: _scores.keys.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+                    onChanged: (v) => setState(() => _activePlayer = v),
+                  ),
                 const SizedBox(width: 12),
                 IconButton(
                   icon: const Icon(Icons.remove),
@@ -225,6 +342,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             ),
           ),
           ElevatedButton(onPressed: _addStroke, child: const Text('Adicionar stroke')),
+          const SizedBox(width: 8),
+          ElevatedButton(onPressed: _invitePlayer, child: const Text('Convidar jogador')),
           const SizedBox(height: 8),
           Expanded(
             child: SingleChildScrollView(
@@ -253,7 +372,26 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   }
 
   Widget _buildScoreTable() {
-    final players = _scores.keys.toList()..sort();
+    // Sort players by total score ascending (lower is better) so leader is on top
+    final players = _scores.keys.toList();
+    // compute totals; players with no strokes treated as 0
+    final Map<String, int> totals = {};
+    for (final p in players) {
+      var t = 0;
+      final hm = _scores[p];
+      if (hm != null && hm.isNotEmpty) {
+        for (final v in hm.values) {
+          t += v;
+        }
+      }
+      totals[p] = t;
+    }
+    players.sort((a, b) {
+      final ta = totals[a] ?? 0;
+      final tb = totals[b] ?? 0;
+      if (ta != tb) return ta.compareTo(tb);
+      return a.compareTo(b);
+    });
     // Determine holes to display. If widget.holes == 0 we treat as dynamic and compute max from scores/current
     int maxHole = widget.holes > 0 ? widget.holes : _currentHole;
     for (final p in _scores.keys) {

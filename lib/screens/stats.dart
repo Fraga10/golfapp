@@ -3,14 +3,45 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import '../models/game.dart';
 
-class StatsScreen extends StatelessWidget {
+class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final box = Hive.box('games');
-    final games = box.values.toList().cast<Map>().map((m) => Game.fromMap(m)).toList();
+  State<StatsScreen> createState() => _StatsScreenState();
+}
 
+class _StatsScreenState extends State<StatsScreen> {
+  List<Game> _games = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGames();
+  }
+
+  Future<void> _loadGames() async {
+    try {
+      if (!Hive.isBoxOpen('games')) await Hive.openBox('games');
+      final box = Hive.box('games');
+      final games = box.values.toList().cast<Map>().map((m) => Game.fromMap(m)).toList();
+      setState(() {
+        _games = games;
+        _loading = false;
+      });
+    } catch (_) {
+      setState(() {
+        _games = [];
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    final games = _games;
     final count = games.length;
     final scores = games.map((g) => g.score).where((s) => s != null).map((s) => s!).toList();
     final avg = scores.isNotEmpty ? scores.reduce((a, b) => a + b) / scores.length : 0.0;

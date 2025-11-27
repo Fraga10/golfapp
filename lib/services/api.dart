@@ -4,10 +4,18 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class Api {
-  // Update this base URL if your server is remote or uses TLS
-  static const baseUrl = 'http://localhost:18080';
+  // Base URL is configurable via .env (API_BASE_URL) or falls back to localhost:18080
+  static String get baseUrl {
+    try {
+      return dotenv.env['API_BASE_URL'] ?? 'http://localhost:18080';
+    } catch (_) {
+      // dotenv not initialized yet — fall back to default
+      return 'http://localhost:18080';
+    }
+  }
   static String? _apiKey;
   static Map<String, dynamic>? _currentUser;
 
@@ -61,6 +69,14 @@ class Api {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static Future<bool> addPlayer(int gameId, String playerName) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final body = jsonEncode({'player_name': playerName});
+    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/players'), headers: headers, body: body);
+    return res.statusCode == 201;
+  }
+
   static WebSocketChannel wsForGame(int gameId) {
     // Connect to ws endpoint; on production use wss and a proper host
       final scheme = baseUrl.startsWith('https') ? 'wss' : 'ws';
@@ -94,8 +110,9 @@ class Api {
     } catch (_) {}
   }
 
-  static void loadAuthFromStorage() {
+  static Future<void> loadAuthFromStorage() async {
     try {
+      if (!Hive.isBoxOpen('auth')) await Hive.openBox('auth');
       final box = Hive.box('auth');
       final key = box.get('api_key') as String?;
       final user = box.get('user') as Map?;

@@ -116,7 +116,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: const Icon(Icons.play_arrow),
                       onPressed: () {
                         final dynamicHoles = status == 'active' ? 0 : game.holes;
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => LiveGameScreen(gameId: game.id, course: game.course, holes: dynamicHoles))).then((_) => _loadGames());
+                        final user = Api.currentUser();
+                        List<String>? initialPlayers;
+                        if (user != null && map['created_by'] != null && (map['created_by'] as int) == (user['id'] as int)) {
+                          // add creator immediately
+                          initialPlayers = [user['name'] as String? ?? ''];
+                        }
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => LiveGameScreen(gameId: game.id, course: game.course, holes: dynamicHoles, initialPlayers: initialPlayers))).then((_) => _loadGames());
                       },
                     ),
                     Builder(builder: (context) {
