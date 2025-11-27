@@ -374,5 +374,20 @@ Handler createHandler() {
     });
   }));
 
+  // Admin: trigger hot-reload for all connected clients (broadcast)
+  router.post('/admin/hotreload', (Request req) async {
+    final requester = await userFromRequest(req);
+    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
+    final payload = jsonEncode({'type': 'hot_reload', 'ts': DateTime.now().toIso8601String()});
+    for (final sockets in _gameSockets.values) {
+      for (final s in sockets) {
+        try {
+          s.sink.add(payload);
+        } catch (_) {}
+      }
+    }
+    return Response.ok(jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
+  });
+
   return router.call;
 }
