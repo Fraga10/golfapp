@@ -60,10 +60,11 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       final idx = _rounds.indexWhere((r) => r['id'] == _currentRoundId);
       if (idx != -1) {
         final rn = _rounds[idx]['round_number'];
-        if (rn != null) return 'Round $rn (id:$_currentRoundId)';
+        if (rn != null) return 'Round $rn';
       }
     } catch (_) {}
-    return 'Round id:$_currentRoundId';
+    // If we have an active round ID but no round_number, show a generic label
+    return 'Round';
   }
 
   // Last-round computations removed.
@@ -157,6 +158,27 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             // DEBUG: show fetched rounds summary
             // ignore: avoid_print
             print('DEBUG: _initCacheAndWs fetched rounds count=${_rounds.length} last=${_rounds.isNotEmpty ? _rounds.last['id'] : 'none'}');
+            try {
+              final box = Hive.box('live_cache');
+              box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      // If after trying cache + server there are still no rounds, create the initial round (round 1)
+      if (_rounds.isEmpty) {
+        try {
+          final res = await Api.createRound(widget.gameId);
+          final rid = res['id'] as int? ?? (res['round_id'] as int?);
+          if (rid != null) {
+            _currentRoundId = rid;
+            _currentHole = 1;
+            final r = <String, dynamic>{
+              'id': rid,
+              'round_number': 1,
+              'started_at': DateTime.now().toIso8601String(),
+            };
+            _rounds.add(r);
             try {
               final box = Hive.box('live_cache');
               box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
