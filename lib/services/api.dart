@@ -65,67 +65,10 @@ class Api {
     _attachAuthHeaders(headers);
     final bodyMap = {'player_name': playerName, 'hole_number': holeNumber, 'strokes': strokes, 'overwrite': overwrite};
     if (roundId != null) bodyMap['round_id'] = roundId;
-    // Debug: persist last N stroke request payloads to Hive for inspection
-    try {
-      final entry = <String, dynamic>{
-        'id': DateTime.now().toIso8601String(),
-        'ts': DateTime.now().toIso8601String(),
-        'game_id': gameId,
-        'body': Map<String, dynamic>.from(bodyMap),
-        'status': 'pending',
-      };
-      if (!Hive.isBoxOpen('debug_strokes')) {
-        try {
-          await Hive.openBox('debug_strokes');
-        } catch (_) {}
-      }
-      try {
-        final box = Hive.box('debug_strokes');
-        final raw = box.get('last') as List<dynamic>? ?? <dynamic>[];
-        final list = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)).toList());
-        list.insert(0, entry);
-        if (list.length > 50) list.removeRange(50, list.length);
-        await box.put('last', list);
-      } catch (_) {}
-    } catch (_) {}
-    // optional round_id may be attached by client
-    // caller may set bodyMap['round_id'] before JSON encoding
     final res = await http.post(Uri.parse('$baseUrl/games/$gameId/strokes'), headers: headers, body: jsonEncode(bodyMap));
     if (res.statusCode != 201) {
-      // update debug entry with response if possible
-      try {
-        if (Hive.isBoxOpen('debug_strokes')) {
-          final box = Hive.box('debug_strokes');
-          final raw = box.get('last') as List<dynamic>? ?? <dynamic>[];
-          final list = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)).toList());
-          if (list.isNotEmpty) {
-            list[0]['status'] = 'error';
-            list[0]['response'] = res.body;
-            await box.put('last', list);
-          }
-        }
-      } catch (_) {}
       throw Exception('Failed to add stroke: ${res.statusCode} ${res.body}');
     }
-    // update debug entry with success response
-    try {
-      if (Hive.isBoxOpen('debug_strokes')) {
-        final box = Hive.box('debug_strokes');
-        final raw = box.get('last') as List<dynamic>? ?? <dynamic>[];
-        final list = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e as Map)).toList());
-        if (list.isNotEmpty) {
-          try {
-            final parsed = jsonDecode(res.body);
-            list[0]['status'] = 'ok';
-            list[0]['response'] = parsed;
-          } catch (_) {
-            list[0]['status'] = 'ok';
-            list[0]['response'] = res.body;
-          }
-          await box.put('last', list);
-        }
-      }
-    } catch (_) {}
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -262,7 +205,9 @@ class Api {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
     final res = await http.get(Uri.parse('$baseUrl/games/$gameId/rounds/$roundId'), headers: headers);
-    if (res.statusCode != 200) throw Exception('Failed to fetch round: ${res.statusCode}');
+    if (res.statusCode != 200) {
+      throw Exception('Failed to fetch round: ${res.statusCode} ${res.body}');
+    }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 

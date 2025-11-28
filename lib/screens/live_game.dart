@@ -616,7 +616,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         ? 3
         : (widget.holes > 0 ? widget.holes : 99);
     return Scaffold(
-      appBar: AppBar(title: Text('Live — ${widget.course}')),
+      appBar: AppBar(
+        title: Text('Live — ${widget.course}'),
+        actions: [],
+      ),
       body: Column(
         children: [
           Padding(
@@ -879,6 +882,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       ),
     );
   }
+
+  
 
   Widget _buildScoreTable() {
     // Sort players by total score ascending (lower is better) so leader is on top

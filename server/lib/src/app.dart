@@ -917,55 +917,7 @@ Handler createHandler() {
   });
 
   // Admin debug: list raw strokes and aggregated view for a game (optional round)
-  router.get('/admin/debug/strokes', (Request req) async {
-    final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin') return Response.forbidden('Requires admin');
-    try {
-      final params = req.url.queryParameters;
-      final gidStr = params['game'];
-      if (gidStr == null) return Response(400, body: 'Missing game parameter');
-      final gid = int.tryParse(gidStr);
-      if (gid == null) return Response(400, body: 'Invalid game id');
-      final ridStr = params['round'];
-      final rid = ridStr == null ? null : int.tryParse(ridStr);
-      final values = <String, dynamic>{'gid': gid};
-      var sql = 'SELECT id, player_name, hole_number, strokes, round_id, created_at FROM strokes WHERE game_id = @gid';
-      if (rid != null) {
-        sql += ' AND round_id = @rid';
-        values['rid'] = rid;
-      }
-      sql += ' ORDER BY created_at DESC LIMIT 200';
-      final rows = await DB.conn.query(sql, substitutionValues: values);
-      final list = rows.map((r) {
-        return {
-          'id': r[0],
-          'player_name': r[1],
-          'hole_number': r[2],
-          'strokes': r[3],
-          'round_id': r[4],
-          'created_at': (r[5] as DateTime).toIso8601String(),
-        };
-      }).toList();
-
-      // aggregated players -> hole -> strokes and totals
-      final aggSqlBase = 'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid';
-      final aggSql = (rid != null) ? '$aggSqlBase AND round_id = @rid GROUP BY player_name, hole_number' : '$aggSqlBase GROUP BY player_name, hole_number';
-      final aggRows = await DB.conn.query(aggSql, substitutionValues: values);
-      final Map<String, Map<int, int>> playersAgg = {};
-      final Map<String, int> totals = {};
-      for (final r in aggRows) {
-        final pname = r[0] as String;
-        final hole = (r[1] as int);
-        final ssum = (r[2] as int?) ?? 0;
-        playersAgg.putIfAbsent(pname, () => {})[hole] = ssum;
-        totals[pname] = (totals[pname] ?? 0) + ssum;
-      }
-
-      return Response.ok(jsonEncode({'ok': true, 'rows': list, 'aggregated': {'players': playersAgg, 'totals': totals}}), headers: {'content-type': 'application/json'});
-    } catch (e) {
-      return Response(500, body: 'Error fetching strokes: $e');
-    }
-  });
+  // (admin debug endpoint for strokes removed)
 
   return router.call;
 }
