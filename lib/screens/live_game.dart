@@ -35,11 +35,11 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   // list of rounds (id, round_number, started_at, finished_at)
   final List<Map<String, dynamic>> _rounds = [];
   // legacy last-round fields retired
-  
+
   // display buffer id (details not cached anymore)
   int? _displayRoundId;
   // track the last finished round id explicitly to avoid races with newly-created rounds
-  
+
   // Completer to await canonical game_state when deciding to prompt for next round
   Completer<Map<String, dynamic>>? _pendingGameStateCompleter;
   // Track recent local writes to avoid showing duplicates when the server echoes the stroke
@@ -93,7 +93,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           v.forEach((hk, hv) {
             final hn = int.tryParse(hk.toString()) ?? 0;
             if (hn > 0) {
-              final val = (hv is num) ? hv.toInt() : (int.tryParse(hv.toString()) ?? 0);
+              final val = (hv is num)
+                  ? hv.toInt()
+                  : (int.tryParse(hv.toString()) ?? 0);
               hm[hn] = val;
               totals[pname] = (totals[pname] ?? 0) + val;
             }
@@ -156,8 +158,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             _rounds.clear();
             _rounds.addAll(remote);
             // DEBUG: show fetched rounds summary
-            // ignore: avoid_print
-            print('DEBUG: _initCacheAndWs fetched rounds count=${_rounds.length} last=${_rounds.isNotEmpty ? _rounds.last['id'] : 'none'}');
+            debugPrint(
+              'DEBUG: _initCacheAndWs fetched rounds count=${_rounds.length} last=${_rounds.isNotEmpty ? _rounds.last['id'] : 'none'}',
+            );
             try {
               final box = Hive.box('live_cache');
               box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
@@ -224,8 +227,11 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         try {
           final msg = data is String ? jsonDecode(data) : data;
           // DEBUG: log incoming WS message type
-          // ignore: avoid_print
-          try { print('DEBUG: WS msg type=${msg is Map ? msg['type'] : 'raw'}'); } catch (_) {}
+          try {
+            debugPrint(
+              'DEBUG: WS msg type=${msg is Map ? msg['type'] : 'raw'}',
+            );
+          } catch (_) {}
           if (msg is Map && msg['type'] == 'stroke') {
             final player = msg['player_name'] as String? ?? 'Unknown';
             final hole = (msg['hole_number'] as num?)?.toInt() ?? 1;
@@ -249,27 +255,36 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             });
             if (round != null) {
               // DEBUG: stroke for round
-              // ignore: avoid_print
-              print('DEBUG: stroke ws player=$player hole=$hole strokes=$strokes round=$round');
+              debugPrint(
+                'DEBUG: stroke ws player=$player hole=$hole strokes=$strokes round=$round',
+              );
               // Only refresh last-round details if this stroke belongs to the
               // last finished round we currently know about. Avoid re-loading
               // when the server announces a newly-created (empty) round which
               // would overwrite the finished round view.
               try {
                 final lastFinished = _rounds.isNotEmpty
-                    ? _rounds.lastWhere((r) => r['finished_at'] != null, orElse: () => <String, dynamic>{})
+                    ? _rounds.lastWhere(
+                        (r) => r['finished_at'] != null,
+                        orElse: () => <String, dynamic>{},
+                      )
                     : <String, dynamic>{};
-                final lastRid = lastFinished.isNotEmpty ? (lastFinished['id'] as int?) : null;
+                final lastRid = lastFinished.isNotEmpty
+                    ? (lastFinished['id'] as int?)
+                    : null;
                 if (lastRid != null && lastRid == round) {
                   // DEBUG: stroke matches last finished round, loading last details
-                  // ignore: avoid_print
-                  print('DEBUG: stroke belongs to last finished rid=$lastRid -> _loadLastRoundDetails()');
+                  debugPrint(
+                    'DEBUG: stroke belongs to last finished rid=$lastRid -> _loadLastRoundDetails()',
+                  );
                   _loadLastRoundDetails();
                 }
                 // Also refresh display if this stroke belongs to the currently
                 // displayed round (for live current-round updates).
                 if (_displayRoundId != null && _displayRoundId == round) {
-                  try { _loadDisplayRound(round); } catch (_) {}
+                  try {
+                    _loadDisplayRound(round);
+                  } catch (_) {}
                 }
               } catch (_) {}
             }
@@ -277,10 +292,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             try {
               final r = Map<String, dynamic>.from(msg['round'] as Map? ?? {});
               // DEBUG: round_created received
-              // ignore: avoid_print
-              print('DEBUG: round_created id=${r['id']}');
+              debugPrint('DEBUG: round_created id=${r['id']}');
               final exists = _rounds.any((rr) => rr['id'] == r['id']);
-                    if (!exists) {
+              if (!exists) {
                 setState(() {
                   _rounds.add(r);
                   _currentRoundId = r['id'] as int? ?? _currentRoundId;
@@ -293,7 +307,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
                 } catch (_) {}
-                  // Do not auto-load newly-created (empty) current round into the "last round" display
+                // Do not auto-load newly-created (empty) current round into the "last round" display
               }
             } catch (_) {}
           } else if (msg is Map && msg['type'] == 'round_completed') {
@@ -314,7 +328,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   });
                   // DEBUG: round_completed received
                   // ignore: avoid_print
-                  print('DEBUG: round_completed rid=$rid');
+                  debugPrint('DEBUG: round_completed rid=$rid');
                   try {
                     final box = Hive.box('live_cache');
                     box.put(
@@ -732,7 +746,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       });
       box.put(key, jsonEncode(enc));
       try {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tabela guardada com sucesso')));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tabela guardada com sucesso')),
+          );
       } catch (_) {}
     } catch (_) {}
   }
@@ -799,10 +816,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     // the widget collection literal.
     // Last-round retired: do not schedule loading.
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Live — ${widget.course}'),
-        actions: [],
-      ),
+      appBar: AppBar(title: Text('Live — ${widget.course}'), actions: []),
       body: Column(
         children: [
           Padding(
@@ -915,7 +929,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                         label: Text(_currentRoundLabel()),
                       ),
                       const SizedBox(width: 8),
-                      Text('Hole: $_currentHole', style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        'Hole: $_currentHole',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -931,8 +948,6 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       ),
     );
   }
-
-  
 
   Widget _buildScoreTable() {
     // Sort players by total score ascending (lower is better) so leader is on top

@@ -35,10 +35,18 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Apagar jogo?'),
-        content: const Text('Tem a certeza que deseja apagar este jogo? Esta ação não pode ser desfeita.'),
+        content: const Text(
+          'Tem a certeza que deseja apagar este jogo? Esta ação não pode ser desfeita.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Apagar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Apagar'),
+          ),
         ],
       ),
     );
@@ -47,10 +55,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final success = await Api.deleteGame(id);
       if (!mounted) return;
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Jogo apagado')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Jogo apagado')));
         _loadGames();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Falha ao apagar jogo')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Falha ao apagar jogo')));
       }
     }
   }
@@ -68,24 +80,50 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const StatsScreen()),
             ),
           ),
-          Builder(builder: (context) {
-            final user = Api.currentUser();
-            if (user == null) {
-              return IconButton(
-                icon: const Icon(Icons.login),
-                onPressed: () async {
-                  final u = await Navigator.push(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-                  if (u != null) _loadGames();
-                },
-              );
-            } else {
-              return Row(children: [
-                Padding(padding: const EdgeInsets.symmetric(horizontal: 8.0), child: Text(user['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600))),
-                IconButton(icon: const Icon(Icons.logout), onPressed: () async { await Api.logout(); setState((){}); _loadGames(); }),
-                IconButton(icon: const Icon(Icons.manage_accounts), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersScreen())).then((_) => _loadGames())),
-              ]);
-            }
-          }),
+          Builder(
+            builder: (context) {
+              final user = Api.currentUser();
+              if (user == null) {
+                return IconButton(
+                  icon: const Icon(Icons.login),
+                  onPressed: () async {
+                    final u = await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                    if (u != null) _loadGames();
+                  },
+                );
+              } else {
+                return Row(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Text(
+                        user['name'] ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.logout),
+                      onPressed: () async {
+                        await Api.logout();
+                        setState(() {});
+                        _loadGames();
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.manage_accounts),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const UsersScreen()),
+                      ).then((_) => _loadGames()),
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
         ],
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
@@ -95,10 +133,13 @@ class _HomeScreenState extends State<HomeScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(child: Text('Erro ao carregar jogos: ${snapshot.error}'));
+            return Center(
+              child: Text('Erro ao carregar jogos: ${snapshot.error}'),
+            );
           }
           final games = snapshot.data ?? [];
-          if (games.isEmpty) return const Center(child: Text('Nenhum jogo registado ainda'));
+          if (games.isEmpty)
+            return const Center(child: Text('Nenhum jogo registado ainda'));
           return ListView.separated(
             itemCount: games.length,
             separatorBuilder: (context, index) => const Divider(height: 1),
@@ -108,33 +149,55 @@ class _HomeScreenState extends State<HomeScreen> {
               final status = map['status'] as String? ?? '';
               return ListTile(
                 title: Text(game.course),
-                subtitle: Text('${DateFormat.yMMMd().format(game.date)} • ${status == 'active' ? 'dinâmico' : '${game.holes} buracos'}'),
+                subtitle: Text(
+                  '${DateFormat.yMMMd().format(game.date)} • ${status == 'active' ? 'dinâmico' : '${game.holes} buracos'}',
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
                       icon: const Icon(Icons.play_arrow),
                       onPressed: () {
-                        final dynamicHoles = status == 'active' ? 0 : game.holes;
+                        final dynamicHoles = status == 'active'
+                            ? 0
+                            : game.holes;
                         final user = Api.currentUser();
                         List<String>? initialPlayers;
-                        if (user != null && map['created_by'] != null && (map['created_by'] as int) == (user['id'] as int)) {
+                        if (user != null &&
+                            map['created_by'] != null &&
+                            (map['created_by'] as int) == (user['id'] as int)) {
                           // add creator immediately
                           initialPlayers = [user['name'] as String? ?? ''];
                         }
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => LiveGameScreen(gameId: game.id, course: game.course, holes: dynamicHoles, initialPlayers: initialPlayers))).then((_) => _loadGames());
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => LiveGameScreen(
+                              gameId: game.id,
+                              course: game.course,
+                              holes: dynamicHoles,
+                              initialPlayers: initialPlayers,
+                            ),
+                          ),
+                        ).then((_) => _loadGames());
                       },
                     ),
-                    Builder(builder: (context) {
-                      final user = Api.currentUser();
-                      final role = user != null ? (user['role'] as String? ?? 'viewer') : 'viewer';
-                      final canDelete = (role == 'admin' || role == 'editor');
-                      return IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: canDelete ? () => _confirmAndDelete(game.id) : null,
-                        tooltip: canDelete ? 'Apagar' : 'Sem permissão',
-                      );
-                    }),
+                    Builder(
+                      builder: (context) {
+                        final user = Api.currentUser();
+                        final role = user != null
+                            ? (user['role'] as String? ?? 'viewer')
+                            : 'viewer';
+                        final canDelete = (role == 'admin' || role == 'editor');
+                        return IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: canDelete
+                              ? () => _confirmAndDelete(game.id)
+                              : null,
+                          tooltip: canDelete ? 'Apagar' : 'Sem permissão',
+                        );
+                      },
+                    ),
                   ],
                 ),
                 onTap: () {
@@ -142,9 +205,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     context: context,
                     builder: (_) => AlertDialog(
                       title: Text(game.course),
-                      content: Text('Data: ${DateFormat.yMMMd().add_jm().format(game.date)}\nBuracos: ${game.holes}'),
+                      content: Text(
+                        'Data: ${DateFormat.yMMMd().add_jm().format(game.date)}\nBuracos: ${game.holes}',
+                      ),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar')),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Fechar'),
+                        ),
                       ],
                     ),
                   );

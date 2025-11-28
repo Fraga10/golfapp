@@ -7,7 +7,9 @@ Future<Map<String, dynamic>?> userFromRequest(Request req) async {
   if (auth == null || !auth.toLowerCase().startsWith('bearer ')) return null;
   final token = auth.substring(7).trim();
   if (token.isEmpty) return null;
-  final res = await DB.conn.query('SELECT id, name, api_key, role FROM users WHERE api_key = @k', substitutionValues: {'k': token});
+  final res = await DB.conn.query(
+      'SELECT id, name, api_key, role FROM users WHERE api_key = @k',
+      substitutionValues: {'k': token});
   if (res.isEmpty) return null;
   final row = res.first;
   return {

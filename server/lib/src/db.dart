@@ -27,7 +27,8 @@ class DB {
     final user = env['DB_USER'] ?? 'golfe_user';
     final pass = env['DB_PASS'] ?? 'golfepass';
 
-    _conn = PostgreSQLConnection(host, port, db, username: user, password: pass);
+    _conn =
+        PostgreSQLConnection(host, port, db, username: user, password: pass);
     await _conn.open();
   }
 

@@ -16,6 +16,7 @@ class Api {
       return 'http://localhost:18080';
     }
   }
+
   static String? _apiKey;
   static Map<String, dynamic>? _currentUser;
 
@@ -36,8 +37,19 @@ class Api {
     throw Exception('Failed to load games: \\$res');
   }
 
-  static Future<int> createGame(String course, DateTime date, {int? holes, String? status, List<Map<String, dynamic>>? players, String? mode, String? flow}) async {
-    final body = <String, dynamic>{'course': course, 'date': date.toUtc().toIso8601String()};
+  static Future<int> createGame(
+    String course,
+    DateTime date, {
+    int? holes,
+    String? status,
+    List<Map<String, dynamic>>? players,
+    String? mode,
+    String? flow,
+  }) async {
+    final body = <String, dynamic>{
+      'course': course,
+      'date': date.toUtc().toIso8601String(),
+    };
     if (holes != null) body['holes'] = holes;
     if (status != null) body['status'] = status;
     if (mode != null) body['mode'] = mode;
@@ -45,7 +57,11 @@ class Api {
     if (players != null) body['players'] = players;
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/games'), headers: headers, body: jsonEncode(body));
+    final res = await http.post(
+      Uri.parse('$baseUrl/games'),
+      headers: headers,
+      body: jsonEncode(body),
+    );
     if (res.statusCode == 201) {
       final map = jsonDecode(res.body) as Map<String, dynamic>;
       return map['id'] as int;
@@ -56,16 +72,35 @@ class Api {
   static Future<bool> deleteGame(int id) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.delete(Uri.parse('$baseUrl/games/$id'), headers: headers);
+    final res = await http.delete(
+      Uri.parse('$baseUrl/games/$id'),
+      headers: headers,
+    );
     return res.statusCode == 200;
   }
 
-  static Future<Map<String, dynamic>> addStroke(int gameId, String playerName, int holeNumber, int strokes, {int? roundId, bool overwrite = false}) async {
+  static Future<Map<String, dynamic>> addStroke(
+    int gameId,
+    String playerName,
+    int holeNumber,
+    int strokes, {
+    int? roundId,
+    bool overwrite = false,
+  }) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final bodyMap = {'player_name': playerName, 'hole_number': holeNumber, 'strokes': strokes, 'overwrite': overwrite};
+    final bodyMap = {
+      'player_name': playerName,
+      'hole_number': holeNumber,
+      'strokes': strokes,
+      'overwrite': overwrite,
+    };
     if (roundId != null) bodyMap['round_id'] = roundId;
-    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/strokes'), headers: headers, body: jsonEncode(bodyMap));
+    final res = await http.post(
+      Uri.parse('$baseUrl/games/$gameId/strokes'),
+      headers: headers,
+      body: jsonEncode(bodyMap),
+    );
     if (res.statusCode != 201) {
       throw Exception('Failed to add stroke: ${res.statusCode} ${res.body}');
     }
@@ -75,24 +110,42 @@ class Api {
   static Future<Map<String, dynamic>> createRound(int gameId) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/rounds'), headers: headers, body: jsonEncode({}));
-    if (res.statusCode != 201) throw Exception('Failed to create round: ${res.statusCode}');
+    final res = await http.post(
+      Uri.parse('$baseUrl/games/$gameId/rounds'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
+    if (res.statusCode != 201)
+      throw Exception('Failed to create round: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
-  static Future<Map<String, dynamic>> completeRound(int gameId, int roundId) async {
+  static Future<Map<String, dynamic>> completeRound(
+    int gameId,
+    int roundId,
+  ) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.patch(Uri.parse('$baseUrl/games/$gameId/rounds/$roundId/complete'), headers: headers, body: jsonEncode({}));
-    if (res.statusCode != 200) throw Exception('Failed to complete round: ${res.statusCode}');
+    final res = await http.patch(
+      Uri.parse('$baseUrl/games/$gameId/rounds/$roundId/complete'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
+    if (res.statusCode != 200)
+      throw Exception('Failed to complete round: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> finalizeGame(int gameId) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/finalize'), headers: headers, body: jsonEncode({}));
-    if (res.statusCode != 200) throw Exception('Failed to finalize game: ${res.statusCode}');
+    final res = await http.post(
+      Uri.parse('$baseUrl/games/$gameId/finalize'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
+    if (res.statusCode != 200)
+      throw Exception('Failed to finalize game: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -100,25 +153,39 @@ class Api {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
     final body = jsonEncode({'player_name': playerName});
-    final res = await http.post(Uri.parse('$baseUrl/games/$gameId/players'), headers: headers, body: body);
+    final res = await http.post(
+      Uri.parse('$baseUrl/games/$gameId/players'),
+      headers: headers,
+      body: body,
+    );
     return res.statusCode == 201;
   }
 
   static WebSocketChannel wsForGame(int gameId) {
     // Connect to ws endpoint; on production use wss and a proper host
-      final scheme = baseUrl.startsWith('https') ? 'wss' : 'ws';
-      final host = baseUrl.replaceFirst(RegExp(r'^https?://'), '');
-      final uri = Uri.parse('$scheme://$host/ws/games/$gameId');
+    final scheme = baseUrl.startsWith('https') ? 'wss' : 'ws';
+    final host = baseUrl.replaceFirst(RegExp(r'^https?://'), '');
+    final uri = Uri.parse('$scheme://$host/ws/games/$gameId');
     return WebSocketChannel.connect(uri);
   }
 
   // Authentication helpers
-  static Future<Map<String, dynamic>> login(String name, String password) async {
-    final res = await http.post(Uri.parse('$baseUrl/login'), headers: {'content-type': 'application/json'}, body: jsonEncode({'name': name, 'password': password}));
-    if (res.statusCode != 200) throw Exception('Login failed: ${res.statusCode}');
+  static Future<Map<String, dynamic>> login(
+    String name,
+    String password,
+  ) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/login'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'name': name, 'password': password}),
+    );
+    if (res.statusCode != 200)
+      throw Exception('Login failed: ${res.statusCode}');
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     _apiKey = map['api_key'] as String?;
-    _currentUser = (map['user'] as Map<dynamic, dynamic>?)?.map((k, v) => MapEntry(k.toString(), v));
+    _currentUser = (map['user'] as Map<dynamic, dynamic>?)?.map(
+      (k, v) => MapEntry(k.toString(), v),
+    );
     try {
       final box = Hive.box('auth');
       box.put('api_key', _apiKey);
@@ -161,18 +228,30 @@ class Api {
     throw Exception('Failed to list users: ${res.statusCode}');
   }
 
-  static Future<Map<String, dynamic>> createUser(String name, String password, {String role = 'viewer'}) async {
+  static Future<Map<String, dynamic>> createUser(
+    String name,
+    String password, {
+    String role = 'viewer',
+  }) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/users'), headers: headers, body: jsonEncode({'name': name, 'password': password, 'role': role}));
-    if (res.statusCode != 201) throw Exception('Failed to create user: ${res.statusCode}');
+    final res = await http.post(
+      Uri.parse('$baseUrl/users'),
+      headers: headers,
+      body: jsonEncode({'name': name, 'password': password, 'role': role}),
+    );
+    if (res.statusCode != 201)
+      throw Exception('Failed to create user: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   static Future<String> revokeUser(int id) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/users/$id/revoke'), headers: headers);
+    final res = await http.post(
+      Uri.parse('$baseUrl/users/$id/revoke'),
+      headers: headers,
+    );
     if (res.statusCode != 200) throw Exception('Failed to revoke user');
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     return map['api_key'] as String;
@@ -182,7 +261,10 @@ class Api {
   static Future<bool> getAutoUpdate() async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.get(Uri.parse('$baseUrl/admin/auto_update'), headers: headers);
+    final res = await http.get(
+      Uri.parse('$baseUrl/admin/auto_update'),
+      headers: headers,
+    );
     if (res.statusCode == 200) {
       final map = jsonDecode(res.body) as Map<String, dynamic>;
       return map['enabled'] as bool? ?? false;
@@ -193,7 +275,11 @@ class Api {
   static Future<bool> setAutoUpdate(bool enabled) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/admin/auto_update'), headers: headers, body: jsonEncode({'enabled': enabled}));
+    final res = await http.post(
+      Uri.parse('$baseUrl/admin/auto_update'),
+      headers: headers,
+      body: jsonEncode({'enabled': enabled}),
+    );
     if (res.statusCode == 200) {
       final map = jsonDecode(res.body) as Map<String, dynamic>;
       return map['enabled'] as bool? ?? false;
@@ -204,7 +290,10 @@ class Api {
   static Future<Map<String, dynamic>> getRound(int gameId, int roundId) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.get(Uri.parse('$baseUrl/games/$gameId/rounds/$roundId'), headers: headers);
+    final res = await http.get(
+      Uri.parse('$baseUrl/games/$gameId/rounds/$roundId'),
+      headers: headers,
+    );
     if (res.statusCode != 200) {
       throw Exception('Failed to fetch round: ${res.statusCode} ${res.body}');
     }
@@ -214,7 +303,10 @@ class Api {
   static Future<List<Map<String, dynamic>>> getRounds(int gameId) async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.get(Uri.parse('$baseUrl/games/$gameId/rounds'), headers: headers);
+    final res = await http.get(
+      Uri.parse('$baseUrl/games/$gameId/rounds'),
+      headers: headers,
+    );
     if (res.statusCode == 200) {
       final list = jsonDecode(res.body) as List<dynamic>;
       return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -226,7 +318,11 @@ class Api {
   static Future<Map<String, dynamic>> triggerUpdate() async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.post(Uri.parse('$baseUrl/admin/trigger_update'), headers: headers, body: jsonEncode({}));
+    final res = await http.post(
+      Uri.parse('$baseUrl/admin/trigger_update'),
+      headers: headers,
+      body: jsonEncode({}),
+    );
     if (res.statusCode == 200) {
       return jsonDecode(res.body) as Map<String, dynamic>;
     }
@@ -237,7 +333,10 @@ class Api {
   static Future<String> getUpdateLog() async {
     final headers = <String, String>{'content-type': 'application/json'};
     _attachAuthHeaders(headers);
-    final res = await http.get(Uri.parse('$baseUrl/admin/update_log'), headers: headers);
+    final res = await http.get(
+      Uri.parse('$baseUrl/admin/update_log'),
+      headers: headers,
+    );
     if (res.statusCode == 200) {
       final map = jsonDecode(res.body) as Map<String, dynamic>;
       return map['log'] as String? ?? '';

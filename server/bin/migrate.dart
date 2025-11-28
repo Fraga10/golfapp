@@ -8,7 +8,8 @@ Future<void> main(List<String> args) async {
   await DB.init();
 
   // Split by ; and execute statements individually
-  final statements = sql.split(';').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  final statements =
+      sql.split(';').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
   for (final stmt in statements) {
     try {
       await DB.conn.execute(stmt);

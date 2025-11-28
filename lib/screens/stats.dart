@@ -24,7 +24,11 @@ class _StatsScreenState extends State<StatsScreen> {
     try {
       if (!Hive.isBoxOpen('games')) await Hive.openBox('games');
       final box = Hive.box('games');
-      final games = box.values.toList().cast<Map>().map((m) => Game.fromMap(m)).toList();
+      final games = box.values
+          .toList()
+          .cast<Map>()
+          .map((m) => Game.fromMap(m))
+          .toList();
       setState(() {
         _games = games;
         _loading = false;
@@ -39,14 +43,23 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading)
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
     final games = _games;
     final count = games.length;
-    final scores = games.map((g) => g.score).where((s) => s != null).map((s) => s!).toList();
-    final avg = scores.isNotEmpty ? scores.reduce((a, b) => a + b) / scores.length : 0.0;
+    final scores = games
+        .map((g) => g.score)
+        .where((s) => s != null)
+        .map((s) => s!)
+        .toList();
+    final avg = scores.isNotEmpty
+        ? scores.reduce((a, b) => a + b) / scores.length
+        : 0.0;
     final best = scores.isNotEmpty ? scores.reduce((a, b) => a < b ? a : b) : 0;
-    final latest = count > 0 ? (games..sort((a, b) => b.date.compareTo(a.date))).first : null;
+    final latest = count > 0
+        ? (games..sort((a, b) => b.date.compareTo(a.date))).first
+        : null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Estatísticas')),
@@ -55,13 +68,19 @@ class _StatsScreenState extends State<StatsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Jogos registados: $count', style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              'Jogos registados: $count',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 8),
             Text('Média de score: ${avg.toStringAsFixed(2)}'),
             const SizedBox(height: 8),
             Text('Melhor score: $best'),
             const SizedBox(height: 8),
-            if (latest != null) Text('Último jogo: ${DateFormat.yMMMd().format(latest.date)} — ${latest.course} (${latest.score ?? '-'} )'),
+            if (latest != null)
+              Text(
+                'Último jogo: ${DateFormat.yMMMd().format(latest.date)} — ${latest.course} (${latest.score ?? '-'} )',
+              ),
             const SizedBox(height: 16),
             Expanded(
               child: ListView.builder(

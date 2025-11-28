@@ -38,18 +38,25 @@ class _AddGameScreenState extends State<AddGameScreen> {
       final players = <Map<String, dynamic>>[];
       final isPast = _gameFlow == 'import';
       if (isPast && _playersCtrl.text.trim().isNotEmpty) {
-        final names = _playersCtrl.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
+        final names = _playersCtrl.text
+            .split(',')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty);
         for (final n in names) {
           final playerMap = <String, dynamic>{'player_name': n};
           final strokes = _playerStrokes[n];
           if (strokes != null && strokes.isNotEmpty) {
-            playerMap['strokes'] = Map.fromEntries(strokes.entries.map((e) => MapEntry(e.key.toString(), e.value)));
+            playerMap['strokes'] = Map.fromEntries(
+              strokes.entries.map((e) => MapEntry(e.key.toString(), e.value)),
+            );
           }
           players.add(playerMap);
         }
       }
       final status = isPast ? 'finished' : 'active';
-      final holes = isPast ? (int.tryParse(_holesCtrl.text) ?? _selectedHoles) : null;
+      final holes = isPast
+          ? (int.tryParse(_holesCtrl.text) ?? _selectedHoles)
+          : null;
       // Course is auto-derived from selected mode
       final courseName = _gameMode == 'pitch' ? 'Pitch & Putt' : 'Standard';
       final createdAt = DateTime.now();
@@ -65,7 +72,9 @@ class _AddGameScreenState extends State<AddGameScreen> {
       if (!mounted) return;
       Navigator.pop(context, id);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao criar jogo: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro ao criar jogo: $e')));
     }
   }
 
@@ -80,7 +89,9 @@ class _AddGameScreenState extends State<AddGameScreen> {
           child: ListView(
             children: [
               ListTile(
-                title: Text('Data: ${_date.toLocal().toString().split('.').first}'),
+                title: Text(
+                  'Data: ${_date.toLocal().toString().split('.').first}',
+                ),
                 trailing: IconButton(
                   icon: const Icon(Icons.calendar_today),
                   onPressed: () async {
@@ -90,7 +101,16 @@ class _AddGameScreenState extends State<AddGameScreen> {
                       firstDate: DateTime(2000),
                       lastDate: DateTime(2100),
                     );
-                    if (d != null) setState(() => _date = DateTime(d.year, d.month, d.day, _date.hour, _date.minute));
+                    if (d != null)
+                      setState(
+                        () => _date = DateTime(
+                          d.year,
+                          d.month,
+                          d.day,
+                          _date.hour,
+                          _date.minute,
+                        ),
+                      );
                   },
                 ),
               ),
@@ -104,22 +124,38 @@ class _AddGameScreenState extends State<AddGameScreen> {
                       children: [
                         DropdownButtonFormField<String>(
                           initialValue: _gameMode,
-                          decoration: const InputDecoration(labelText: 'Modo de Jogo'),
+                          decoration: const InputDecoration(
+                            labelText: 'Modo de Jogo',
+                          ),
                           items: const [
-                            DropdownMenuItem(value: 'standard', child: Text('Standard')),
-                            DropdownMenuItem(value: 'pitch', child: Text('Pitch & Putt')),
+                            DropdownMenuItem(
+                              value: 'standard',
+                              child: Text('Standard'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'pitch',
+                              child: Text('Pitch & Putt'),
+                            ),
                           ],
-                          onChanged: (v) => setState(() => _gameMode = v ?? 'standard'),
+                          onChanged: (v) =>
+                              setState(() => _gameMode = v ?? 'standard'),
                         ),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<String>(
                           initialValue: _gameFlow,
                           decoration: const InputDecoration(labelText: 'Fluxo'),
                           items: const [
-                            DropdownMenuItem(value: 'live', child: Text('Live')),
-                            DropdownMenuItem(value: 'import', child: Text('Import')),
+                            DropdownMenuItem(
+                              value: 'live',
+                              child: Text('Live'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'import',
+                              child: Text('Import'),
+                            ),
                           ],
-                          onChanged: (v) => setState(() => _gameFlow = v ?? 'live'),
+                          onChanged: (v) =>
+                              setState(() => _gameFlow = v ?? 'live'),
                         ),
                       ],
                     ),
@@ -130,51 +166,68 @@ class _AddGameScreenState extends State<AddGameScreen> {
                 TextFormField(
                   controller: _scoreCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Resultado (score)'),
+                  decoration: const InputDecoration(
+                    labelText: 'Resultado (score)',
+                  ),
                 ),
               if (_gameFlow == 'import')
                 TextFormField(
                   controller: _playersCtrl,
-                  decoration: const InputDecoration(labelText: 'Jogadores (separar por vírgula)'),
+                  decoration: const InputDecoration(
+                    labelText: 'Jogadores (separar por vírgula)',
+                  ),
                 ),
-              if (_gameFlow == 'import') DropdownButtonFormField<int>(
-                initialValue: _customHoles ? null : _selectedHoles,
-                decoration: const InputDecoration(labelText: 'Buracos'),
-                items: const [
-                  DropdownMenuItem(value: 9, child: Text('9')),
-                  DropdownMenuItem(value: 18, child: Text('18')),
-                  DropdownMenuItem(value: 0, child: Text('Outro')),
-                ],
-                onChanged: (v) {
-                  setState(() {
-                    if (v == null) return;
-                    if (v == 0) {
-                      _customHoles = true;
-                    } else {
-                      _customHoles = false;
-                      _selectedHoles = v;
-                      _holesCtrl.text = v.toString();
-                    }
-                  });
-                },
-              ),
+              if (_gameFlow == 'import')
+                DropdownButtonFormField<int>(
+                  initialValue: _customHoles ? null : _selectedHoles,
+                  decoration: const InputDecoration(labelText: 'Buracos'),
+                  items: const [
+                    DropdownMenuItem(value: 9, child: Text('9')),
+                    DropdownMenuItem(value: 18, child: Text('18')),
+                    DropdownMenuItem(value: 0, child: Text('Outro')),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      if (v == null) return;
+                      if (v == 0) {
+                        _customHoles = true;
+                      } else {
+                        _customHoles = false;
+                        _selectedHoles = v;
+                        _holesCtrl.text = v.toString();
+                      }
+                    });
+                  },
+                ),
               if (_gameFlow == 'import' && _customHoles)
                 TextFormField(
                   controller: _holesCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Buracos (custom)'),
+                  decoration: const InputDecoration(
+                    labelText: 'Buracos (custom)',
+                  ),
                 ),
-              if (_gameFlow == 'import' && (_playersCtrl.text.trim().isNotEmpty))
+              if (_gameFlow == 'import' &&
+                  (_playersCtrl.text.trim().isNotEmpty))
                 Padding(
                   padding: const EdgeInsets.only(top: 12.0),
                   child: ElevatedButton(
                     onPressed: () async {
-                      final names = _playersCtrl.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+                      final names = _playersCtrl.text
+                          .split(',')
+                          .map((s) => s.trim())
+                          .where((s) => s.isNotEmpty)
+                          .toList();
                       if (names.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Insira pelo menos um jogador')));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Insira pelo menos um jogador'),
+                          ),
+                        );
                         return;
                       }
-                      final holes = int.tryParse(_holesCtrl.text) ?? _selectedHoles;
+                      final holes =
+                          int.tryParse(_holesCtrl.text) ?? _selectedHoles;
                       for (final name in names) {
                         _playerStrokes.putIfAbsent(name, () => <int, int>{});
                       }
@@ -188,7 +241,12 @@ class _AddGameScreenState extends State<AddGameScreen> {
                               padding: const EdgeInsets.all(12.0),
                               child: Column(
                                 children: [
-                                  Text('Editar scores por buraco', style: Theme.of(context).textTheme.titleLarge),
+                                  Text(
+                                    'Editar scores por buraco',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleLarge,
+                                  ),
                                   const SizedBox(height: 8),
                                   Expanded(
                                     child: ListView.builder(
@@ -201,24 +259,51 @@ class _AddGameScreenState extends State<AddGameScreen> {
                                             SingleChildScrollView(
                                               scrollDirection: Axis.horizontal,
                                               child: Row(
-                                                children: List.generate(holes, (hIdx) {
+                                                children: List.generate(holes, (
+                                                  hIdx,
+                                                ) {
                                                   final holeNum = hIdx + 1;
-                                                  final ctrl = TextEditingController(text: _playerStrokes[player]?[holeNum]?.toString() ?? '');
+                                                  final ctrl =
+                                                      TextEditingController(
+                                                        text:
+                                                            _playerStrokes[player]?[holeNum]
+                                                                ?.toString() ??
+                                                            '',
+                                                      );
                                                   return Padding(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 4.0,
+                                                        ),
                                                     child: SizedBox(
                                                       width: 64,
                                                       child: TextField(
                                                         controller: ctrl,
-                                                        keyboardType: TextInputType.number,
-                                                        decoration: InputDecoration(labelText: '$holeNum'),
+                                                        keyboardType:
+                                                            TextInputType
+                                                                .number,
+                                                        decoration:
+                                                            InputDecoration(
+                                                              labelText:
+                                                                  '$holeNum',
+                                                            ),
                                                         onChanged: (val) {
-                                                          final v = int.tryParse(val) ?? 0;
-                                                          _playerStrokes[player] = _playerStrokes[player] ?? <int, int>{};
+                                                          final v =
+                                                              int.tryParse(
+                                                                val,
+                                                              ) ??
+                                                              0;
+                                                          _playerStrokes[player] =
+                                                              _playerStrokes[player] ??
+                                                              <int, int>{};
                                                           if (v > 0) {
-                                                            _playerStrokes[player]![holeNum] = v;
+                                                            _playerStrokes[player]![holeNum] =
+                                                                v;
                                                           } else {
-                                                            _playerStrokes[player]!.remove(holeNum);
+                                                            _playerStrokes[player]!
+                                                                .remove(
+                                                                  holeNum,
+                                                                );
                                                           }
                                                         },
                                                       ),
@@ -236,9 +321,12 @@ class _AddGameScreenState extends State<AddGameScreen> {
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.end,
                                     children: [
-                                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Fechar')),
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('Fechar'),
+                                      ),
                                     ],
-                                  )
+                                  ),
                                 ],
                               ),
                             ),
@@ -251,14 +339,13 @@ class _AddGameScreenState extends State<AddGameScreen> {
                 ),
               TextFormField(
                 controller: _notesCtrl,
-                decoration: const InputDecoration(labelText: 'Notas (opcional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Notas (opcional)',
+                ),
                 maxLines: 3,
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _save,
-                child: const Text('Guardar'),
-              ),
+              ElevatedButton(onPressed: _save, child: const Text('Guardar')),
             ],
           ),
         ),

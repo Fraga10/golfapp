@@ -27,11 +27,15 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final user = await Api.login(_nameCtrl.text.trim(), _passCtrl.text);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Login bem sucedido')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Login bem sucedido')));
       Navigator.pop(context, user);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Falha no login: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Falha no login: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -50,16 +54,23 @@ class _LoginScreenState extends State<LoginScreen> {
               TextFormField(
                 controller: _nameCtrl,
                 decoration: const InputDecoration(labelText: 'Nome'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Insira o nome' : null,
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Insira o nome' : null,
               ),
               TextFormField(
                 controller: _passCtrl,
                 decoration: const InputDecoration(labelText: 'Senha'),
                 obscureText: true,
-                validator: (v) => (v == null || v.isEmpty) ? 'Insira a senha' : null,
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Insira a senha' : null,
               ),
               const SizedBox(height: 20),
-              ElevatedButton(onPressed: _loading ? null : _submit, child: _loading ? const CircularProgressIndicator() : const Text('Entrar')),
+              ElevatedButton(
+                onPressed: _loading ? null : _submit,
+                child: _loading
+                    ? const CircularProgressIndicator()
+                    : const Text('Entrar'),
+              ),
             ],
           ),
         ),

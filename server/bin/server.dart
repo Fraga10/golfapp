@@ -25,9 +25,8 @@ Future<void> main(List<String> args) async {
 
   await DB.init();
 
-  final handler = const Pipeline()
-      .addMiddleware(logRequests())
-      .addHandler(createHandler());
+  final handler =
+      const Pipeline().addMiddleware(logRequests()).addHandler(createHandler());
 
   final server = await io.serve(handler, InternetAddress.anyIPv4, port);
   stderr.writeln('Server listening on port ${server.port}');
