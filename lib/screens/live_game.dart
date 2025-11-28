@@ -739,73 +739,122 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                           ),
                           label: Text('R$rn'),
                           onPressed: () async {
-                            // show round details
-                            await showDialog(
-                              context: context,
-                              builder: (_) => AlertDialog(
-                                title: Text('Round $rn'),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('ID: ${r['id']}'),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      'Started: ${r['started_at'] ?? 'unknown'}',
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      'Finished: ${r['finished_at'] ?? 'open'}',
+                            final rid = r['id'] as int?;
+                            if (rid == null) {
+                              await showDialog(
+                                context: context,
+                                builder: (_) => AlertDialog(
+                                  title: Text('Round $rn'),
+                                  content: const Text('Round sem id'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Fechar'),
                                     ),
                                   ],
                                 ),
-                                actions: [
-                                  if (!finished)
-                                    TextButton(
-                                      onPressed: () async {
-                                        Navigator.pop(context);
-                                        try {
-                                          final rid = r['id'] as int?;
-                                          if (rid != null) {
-                                            await Api.completeRound(
-                                              widget.gameId,
-                                              rid,
-                                            );
-                                            setState(() {
-                                              r['finished_at'] = DateTime.now()
-                                                  .toIso8601String();
-                                            });
-                                            try {
-                                              final box = Hive.box(
-                                                'live_cache',
+                              );
+                              return;
+                            }
+                            try {
+                              final resp = await Api.getRound(
+                                widget.gameId,
+                                rid,
+                              );
+                              final playersRaw =
+                                  (resp['players'] as Map?) ?? {};
+                              final Map<String, Map<int, int>> players = {};
+                              final holesSet = <int>{};
+                              playersRaw.forEach((k, v) {
+                                final pname = k.toString();
+                                final hm = <int, int>{};
+                                if (v is Map) {
+                                  v.forEach((hk, hv) {
+                                    final hn = int.tryParse(hk.toString()) ?? 0;
+                                    if (hn > 0) {
+                                      hm[hn] = (hv as int?) ?? 0;
+                                      holesSet.add(hn);
+                                    }
+                                  });
+                                }
+                                players[pname] = hm;
+                              });
+                              final holes = holesSet.toList()..sort();
+                              if (players.isEmpty) {
+                                await showDialog(
+                                  context: context,
+                                  builder: (_) => AlertDialog(
+                                    title: Text('Round $rn — Tabela'),
+                                    content: const Text(
+                                      'Nenhuma tacada registada neste round.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('Fechar'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              } else {
+                                await showDialog(
+                                  context: context,
+                                  builder: (_) => AlertDialog(
+                                    title: Text('Round $rn — Tabela'),
+                                    content: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: DataTable(
+                                        columns: [
+                                          const DataColumn(
+                                            label: Text('Player'),
+                                          ),
+                                          ...holes.map(
+                                            (h) =>
+                                                DataColumn(label: Text('$h')),
+                                          ),
+                                          const DataColumn(
+                                            label: Text('Total'),
+                                          ),
+                                        ],
+                                        rows: players.keys.map((pname) {
+                                          final hm = players[pname] ?? {};
+                                          int total = 0;
+                                          final cells = <DataCell>[
+                                            DataCell(Text(pname)),
+                                          ];
+                                          for (final h in holes) {
+                                            final v = hm[h];
+                                            if (v == null) {
+                                              cells.add(
+                                                const DataCell(Text('-')),
                                               );
-                                              box.put(
-                                                'game_${widget.gameId}_rounds',
-                                                jsonEncode(_rounds),
-                                              );
-                                            } catch (_) {}
+                                            } else {
+                                              total += v;
+                                              cells.add(DataCell(Text('$v')));
+                                            }
                                           }
-                                        } catch (e) {
-                                          if (!mounted) return;
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            SnackBar(content: Text('Erro: $e')),
-                                          );
-                                        }
-                                      },
-                                      child: const Text(
-                                        'Marcar como terminado',
+                                          cells.add(DataCell(Text('$total')));
+                                          return DataRow(cells: cells);
+                                        }).toList(),
                                       ),
                                     ),
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context),
-                                    child: const Text('Fechar'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('Fechar'),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            );
-                            if (!mounted) return;
+                                );
+                              }
+                            } catch (e) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Erro a obter round: $e'),
+                                ),
+                              );
+                            }
                           },
                         );
                       }).toList(),
