@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'db.dart';
 
 // Return canonical game state data (players map and totals) used by broadcasts
@@ -6,6 +5,24 @@ Future<Map<String, dynamic>> fetchCanonicalGameState(int gid) async {
   final rows = await DB.conn.query(
     'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number',
     substitutionValues: {'gid': gid},
+  );
+  final Map<String, Map<int, int>> players = {};
+  final Map<String, int> totals = {};
+  for (final r in rows) {
+    final pname = r[0] as String;
+    final hole = (r[1] as int);
+    final ssum = (r[2] as int?) ?? 0;
+    players.putIfAbsent(pname, () => {})[hole] = ssum;
+    totals[pname] = (totals[pname] ?? 0) + ssum;
+  }
+  return {'players': players, 'totals': totals};
+}
+
+// Fetch detailed strokes for a specific round: per-player per-hole breakdown and totals
+Future<Map<String, dynamic>> fetchRoundDetails(int roundId) async {
+  final rows = await DB.conn.query(
+    'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE round_id = @rid GROUP BY player_name, hole_number',
+    substitutionValues: {'rid': roundId},
   );
   final Map<String, Map<int, int>> players = {};
   final Map<String, int> totals = {};

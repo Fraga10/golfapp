@@ -617,6 +617,38 @@ Handler createHandler() {
     }
   });
 
+  // List rounds for a game
+  router.get('/games/<id|[0-9]+>/rounds', (Request req, String id) async {
+    final gid = int.parse(id);
+    try {
+      final res = await DB.conn.query('SELECT id, round_number, created_by, finished_at FROM rounds WHERE game_id = @gid ORDER BY round_number', substitutionValues: {'gid': gid});
+      final rounds = res.map((r) => {
+        'id': r[0],
+        'round_number': r[1],
+        'created_by': r[2],
+        'finished_at': r[3] != null ? (r[3] as DateTime).toIso8601String() : null,
+      }).toList();
+      return Response.ok(jsonEncode(rounds), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error listing rounds: $e');
+    }
+  });
+
+  // Get details for a specific round (per-player per-hole breakdown + totals)
+  router.get('/games/<id|[0-9]+>/rounds/<rid|[0-9]+>', (Request req, String id, String rid) async {
+    final gid = int.parse(id);
+    final roundId = int.parse(rid);
+    try {
+      // verify round belongs to game
+      final rr = await DB.conn.query('SELECT id FROM rounds WHERE id = @rid AND game_id = @gid', substitutionValues: {'rid': roundId, 'gid': gid});
+      if (rr.isEmpty) return Response.notFound('Round not found');
+      final details = await fetchRoundDetails(roundId);
+      return Response.ok(jsonEncode({'id': roundId, 'game_id': gid, 'players': details['players'], 'totals': details['totals']}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error fetching round: $e');
+    }
+  });
+
   // Complete a round (set finished_at) and return round totals
   router.patch('/games/<id|[0-9]+>/rounds/<rid|[0-9]+>/complete', (Request req, String id, String rid) async {
     final user = await userFromRequest(req);
