@@ -34,13 +34,12 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   int? _currentRoundId;
   // list of rounds (id, round_number, started_at, finished_at)
   final List<Map<String, dynamic>> _rounds = [];
-  // cached details for the last finished round
-  Map<String, Map<int, int>> _lastRoundPlayers = {};
-  Map<String, int> _lastRoundTotals = {};
-  int? _lastRoundIdLoaded;
-  bool _loadingLastRound = false;
+  // legacy last-round fields retired
+  
+  // display buffer id (details not cached anymore)
+  int? _displayRoundId;
   // track the last finished round id explicitly to avoid races with newly-created rounds
-  int? _lastFinishedRoundId;
+  
   // Completer to await canonical game_state when deciding to prompt for next round
   Completer<Map<String, dynamic>>? _pendingGameStateCompleter;
   // Track recent local writes to avoid showing duplicates when the server echoes the stroke
@@ -55,80 +54,33 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     _initCacheAndWs();
   }
 
-  List<int> _computeLastRoundHoles() {
-    final holes = <int>{};
-    _lastRoundPlayers.forEach((_, hm) {
-      for (var h in hm.keys) {
-        holes.add(h);
+  String _currentRoundLabel() {
+    if (_currentRoundId == null) return 'Nenhum round ativo';
+    try {
+      final idx = _rounds.indexWhere((r) => r['id'] == _currentRoundId);
+      if (idx != -1) {
+        final rn = _rounds[idx]['round_number'];
+        if (rn != null) return 'Round $rn (id:$_currentRoundId)';
       }
-    });
-    final list = holes.toList()..sort();
-    return list;
+    } catch (_) {}
+    return 'Round id:$_currentRoundId';
   }
 
+  // Last-round computations removed.
+
   Future<void> _loadLastRoundDetails() async {
-    if (_loadingLastRound) return;
-    try {
-      if (_rounds.isEmpty) return;
-      // prefer explicit last finished round id if we have it
-      int? rid = _lastFinishedRoundId;
-      Map<String, dynamic>? last;
-      if (rid == null) {
-        // find last finished round
-        for (var i = _rounds.length - 1; i >= 0; i--) {
-          final candidate = _rounds[i];
-          if (candidate['finished_at'] != null) {
-            last = candidate;
-            break;
-          }
-        }
-        if (last == null && _rounds.isNotEmpty) last = _rounds.last;
-        if (last == null) return;
-        rid = last['id'] as int?;
-      }
-      if (rid == null) return;
-      if (_lastRoundIdLoaded != null && _lastRoundIdLoaded == rid) return;
-      setState(() {
-        _loadingLastRound = true;
-      });
-      final resp = await Api.getRound(widget.gameId, rid);
-      final playersRaw = (resp['players'] as Map?) ?? {};
-      final Map<String, Map<int, int>> players = {};
-      final Map<String, int> totals = {};
-      playersRaw.forEach((k, v) {
-        final pname = k.toString();
-        final hm = <int, int>{};
-        if (v is Map) {
-          v.forEach((hk, hv) {
-            final hn = int.tryParse(hk.toString()) ?? 0;
-            if (hn > 0) {
-              final val = (hv is num) ? hv.toInt() : (int.tryParse(hv.toString()) ?? 0);
-              hm[hn] = val;
-              totals[pname] = (totals[pname] ?? 0) + val;
-            }
-          });
-        }
-        players[pname] = hm;
-      });
-      if (!mounted) return;
-      setState(() {
-        _lastRoundPlayers = players;
-        _lastRoundTotals = totals;
-        _lastRoundIdLoaded = rid;
-        // if this round is finished, record it explicitly
-        _lastFinishedRoundId = rid;
-      });
-    } catch (e) {
-      // ignore errors; we still ensure the loading flag is cleared below
-    } finally {
-      if (mounted) setState(() => _loadingLastRound = false);
-    }
+    // Last-round feature retired: no-op to avoid loading/caching last round
+    return;
   }
 
   Future<void> _loadRoundDetails(int rid) async {
-    if (_loadingLastRound) return;
+    // Last-round feature retired: do not load or cache round details.
+    return;
+  }
+
+  Future<void> _loadDisplayRound(int rid) async {
+    // Load round details into display buffer (no last-round involvement)
     try {
-      setState(() { _loadingLastRound = true; });
       final resp = await Api.getRound(widget.gameId, rid);
       final playersRaw = (resp['players'] as Map?) ?? {};
       final Map<String, Map<int, int>> players = {};
@@ -150,19 +102,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       });
       if (!mounted) return;
       setState(() {
-        _lastRoundPlayers = players;
-        _lastRoundTotals = totals;
-        _lastRoundIdLoaded = rid;
-        // if this round is finished, remember it
-        final idx = _rounds.indexWhere((rr) => rr['id'] == rid);
-        if (idx != -1 && _rounds[idx]['finished_at'] != null) {
-          _lastFinishedRoundId = rid;
-        }
+        _displayRoundId = rid;
       });
-    } catch (e) {
+    } catch (_) {
       // ignore
-    } finally {
-      if (mounted) setState(() => _loadingLastRound = false);
     }
   }
 
@@ -211,6 +154,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           if (remote.isNotEmpty) {
             _rounds.clear();
             _rounds.addAll(remote);
+            // DEBUG: show fetched rounds summary
+            // ignore: avoid_print
+            print('DEBUG: _initCacheAndWs fetched rounds count=${_rounds.length} last=${_rounds.isNotEmpty ? _rounds.last['id'] : 'none'}');
             try {
               final box = Hive.box('live_cache');
               box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
@@ -243,26 +189,21 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                 _currentRoundId = rid;
                 _currentHole = 1;
               });
+              // do not set display to the newly-created current round; user wants to see only the last finished round
             } catch (_) {}
           }
         }
       } catch (_) {}
     } catch (_) {}
-    // initialize _lastFinishedRoundId from cached rounds if we have one
-    try {
-      for (var i = _rounds.length - 1; i >= 0; i--) {
-        final candidate = _rounds[i];
-        if (candidate['finished_at'] != null) {
-          _lastFinishedRoundId = candidate['id'] as int?;
-          break;
-        }
-      }
-    } catch (_) {}
+    // Last-round feature retired; no initialization needed here.
     final channel = _channel = Api.wsForGame(widget.gameId);
     _sub = channel.stream.listen(
       (data) {
         try {
           final msg = data is String ? jsonDecode(data) : data;
+          // DEBUG: log incoming WS message type
+          // ignore: avoid_print
+          try { print('DEBUG: WS msg type=${msg is Map ? msg['type'] : 'raw'}'); } catch (_) {}
           if (msg is Map && msg['type'] == 'stroke') {
             final player = msg['player_name'] as String? ?? 'Unknown';
             final hole = (msg['hole_number'] as num?)?.toInt() ?? 1;
@@ -285,6 +226,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               _events.insert(0, '$ts $player: hole $hole -> $strokes');
             });
             if (round != null) {
+              // DEBUG: stroke for round
+              // ignore: avoid_print
+              print('DEBUG: stroke ws player=$player hole=$hole strokes=$strokes round=$round');
               // Only refresh last-round details if this stroke belongs to the
               // last finished round we currently know about. Avoid re-loading
               // when the server announces a newly-created (empty) round which
@@ -295,15 +239,26 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     : <String, dynamic>{};
                 final lastRid = lastFinished.isNotEmpty ? (lastFinished['id'] as int?) : null;
                 if (lastRid != null && lastRid == round) {
+                  // DEBUG: stroke matches last finished round, loading last details
+                  // ignore: avoid_print
+                  print('DEBUG: stroke belongs to last finished rid=$lastRid -> _loadLastRoundDetails()');
                   _loadLastRoundDetails();
+                }
+                // Also refresh display if this stroke belongs to the currently
+                // displayed round (for live current-round updates).
+                if (_displayRoundId != null && _displayRoundId == round) {
+                  try { _loadDisplayRound(round); } catch (_) {}
                 }
               } catch (_) {}
             }
           } else if (msg is Map && msg['type'] == 'round_created') {
             try {
               final r = Map<String, dynamic>.from(msg['round'] as Map? ?? {});
+              // DEBUG: round_created received
+              // ignore: avoid_print
+              print('DEBUG: round_created id=${r['id']}');
               final exists = _rounds.any((rr) => rr['id'] == r['id']);
-              if (!exists) {
+                    if (!exists) {
                 setState(() {
                   _rounds.add(r);
                   _currentRoundId = r['id'] as int? ?? _currentRoundId;
@@ -316,6 +271,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
                 } catch (_) {}
+                  // Do not auto-load newly-created (empty) current round into the "last round" display
               }
             } catch (_) {}
           } else if (msg is Map && msg['type'] == 'round_completed') {
@@ -334,9 +290,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                       '${msg['ts'] ?? ''} round_completed: $rid',
                     );
                   });
-                  // mark last finished round explicitly and load it
-                  _lastFinishedRoundId = rid;
-                  _loadRoundDetails(rid);
+                  // DEBUG: round_completed received
+                  // ignore: avoid_print
+                  print('DEBUG: round_completed rid=$rid');
                   try {
                     final box = Hive.box('live_cache');
                     box.put(
@@ -533,6 +489,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           }
 
           if (shouldPrompt) {
+            if (!mounted) return;
             final playMore = await showDialog<bool>(
               context: context,
               builder: (_) => AlertDialog(
@@ -551,6 +508,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               ),
             );
 
+            if (!mounted) return;
             if (playMore == true) {
               try {
                 // load details for the just-played round so the UI shows its table
@@ -751,6 +709,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         enc[player] = map;
       });
       box.put(key, jsonEncode(enc));
+      try {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tabela guardada com sucesso')));
+      } catch (_) {}
     } catch (_) {}
   }
 
@@ -811,6 +772,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     final int maxAllowedHole = _pitchMode
         ? 3
         : (widget.holes > 0 ? widget.holes : 99);
+    // Ensure we load last finished round details once, but schedule
+    // the call after this frame to avoid illegal statements inside
+    // the widget collection literal.
+    // Last-round retired: do not schedule loading.
     return Scaffold(
       appBar: AppBar(
         title: Text('Live — ${widget.course}'),
@@ -920,209 +885,22 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     'Jogo: ${widget.course}   Buraco atual: $_currentHole',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Chip(
+                        avatar: const Icon(Icons.flag, size: 16),
+                        label: Text(_currentRoundLabel()),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('Hole: $_currentHole', style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
                   const SizedBox(height: 8),
-                  if (_rounds.isNotEmpty) ...[
-                    const Text('Rounds:'),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      children: _rounds.map((r) {
-                        final rn = r['round_number'] ?? r['id'];
-                        final finished = r['finished_at'] != null;
-                        final color = finished ? Colors.grey : Colors.green;
-                        final icon = finished ? Icons.check : Icons.play_arrow;
-                        return ActionChip(
-                          avatar: CircleAvatar(
-                            backgroundColor: color,
-                            child: Icon(icon, size: 16, color: Colors.white),
-                          ),
-                          label: Text('R$rn'),
-                          onPressed: () async {
-                            final rid = r['id'] as int?;
-                            if (rid == null) {
-                              await showDialog(
-                                context: context,
-                                builder: (_) => AlertDialog(
-                                  title: Text('Round $rn'),
-                                  content: const Text('Round sem id'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('Fechar'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              return;
-                            }
-                            try {
-                              final resp = await Api.getRound(
-                                widget.gameId,
-                                rid,
-                              );
-                              final playersRaw =
-                                  (resp['players'] as Map?) ?? {};
-                              final Map<String, Map<int, int>> players = {};
-                              final holesSet = <int>{};
-                              playersRaw.forEach((k, v) {
-                                final pname = k.toString();
-                                final hm = <int, int>{};
-                                if (v is Map) {
-                                  v.forEach((hk, hv) {
-                                    final hn = int.tryParse(hk.toString()) ?? 0;
-                                    if (hn > 0) {
-                                      final val = (hv is num)
-                                          ? hv.toInt()
-                                          : (int.tryParse(hv.toString()) ?? 0);
-                                      hm[hn] = val;
-                                      holesSet.add(hn);
-                                    }
-                                  });
-                                }
-                                players[pname] = hm;
-                              });
-                              final holes = holesSet.toList()..sort();
-                              if (players.isEmpty) {
-                                await showDialog(
-                                  context: context,
-                                  builder: (_) => AlertDialog(
-                                    title: Text('Round $rn — Tabela'),
-                                    content: const Text(
-                                      'Nenhuma tacada registada neste round.',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context),
-                                        child: const Text('Fechar'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              } else {
-                                await showDialog(
-                                  context: context,
-                                  builder: (_) => AlertDialog(
-                                    title: Text('Round $rn — Tabela'),
-                                    content: SingleChildScrollView(
-                                      scrollDirection: Axis.horizontal,
-                                      child: DataTable(
-                                        columns: [
-                                          const DataColumn(
-                                            label: Text('Player'),
-                                          ),
-                                          ...holes.map(
-                                            (h) =>
-                                                DataColumn(label: Text('$h')),
-                                          ),
-                                          const DataColumn(
-                                            label: Text('Total'),
-                                          ),
-                                        ],
-                                        rows: players.keys.map((pname) {
-                                          final hm = players[pname] ?? {};
-                                          int total = 0;
-                                          final cells = <DataCell>[
-                                            DataCell(Text(pname)),
-                                          ];
-                                          for (final h in holes) {
-                                            final v = hm[h];
-                                            if (v == null) {
-                                              cells.add(
-                                                const DataCell(Text('-')),
-                                              );
-                                            } else {
-                                              total += v;
-                                              cells.add(DataCell(Text('$v')));
-                                            }
-                                          }
-                                          cells.add(DataCell(Text('$total')));
-                                          return DataRow(cells: cells);
-                                        }).toList(),
-                                      ),
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(context),
-                                        child: const Text('Fechar'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-                            } catch (e) {
-                              if (!mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Erro a obter round: $e'),
-                                ),
-                              );
-                            }
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
+                  // Rounds chips hidden: only show the last finished round details
+                  const SizedBox.shrink(),
                   _buildScoreTable(),
                   const SizedBox(height: 12),
-                  const Text('Último round (detalhes):'),
-                  const SizedBox(height: 6),
-                  _loadingLastRound
-                      ? const Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(),
-                        )
-                      : _lastRoundPlayers.isEmpty
-                          ? const Text('Nenhum round jogado ainda.')
-                            : (() {
-                                final holes = _computeLastRoundHoles();
-                                String? winner;
-                                if (_lastRoundTotals.isNotEmpty) {
-                                  try {
-                                    winner = _lastRoundTotals.entries.reduce((a, b) => a.value <= b.value ? a : b).key;
-                                  } catch (_) {
-                                    winner = null;
-                                  }
-                                }
-                                return SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: DataTable(
-                                    columns: [
-                                      const DataColumn(label: Text('Player')),
-                                      // holes present
-                                      ...holes.map((h) => DataColumn(label: Text('$h'))),
-                                      const DataColumn(label: Text('Total')),
-                                    ],
-                                    rows: _lastRoundPlayers.keys.map((pname) {
-                                      final hm = _lastRoundPlayers[pname] ?? {};
-                                      int total = _lastRoundTotals[pname] ?? 0;
-                                      final cells = <DataCell>[];
-                                      // name cell with winner icon
-                                      final isWinner = (winner != null && winner == pname);
-                                      cells.add(
-                                        DataCell(Row(
-                                          children: [
-                                            if (isWinner) ...[
-                                              Icon(Icons.star, size: 16, color: Colors.green[800]),
-                                              const SizedBox(width: 6),
-                                            ],
-                                            Text(pname),
-                                          ],
-                                        )),
-                                      );
-                                      for (final h in holes) {
-                                        final v = hm[h];
-                                        cells.add(DataCell(Text(v == null ? '-' : '$v')));
-                                      }
-                                      cells.add(DataCell(Text('$total')));
-                                      return DataRow(
-                                        color: isWinner ? MaterialStateProperty.all(Colors.greenAccent.withAlpha(70)) : null,
-                                        cells: cells,
-                                      );
-                                    }).toList(),
-                                  ),
-                                );
-                              })(),
                 ],
               ),
             ),
