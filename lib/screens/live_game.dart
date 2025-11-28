@@ -152,9 +152,23 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           }
         }
       } catch (_) {}
+      // if no cached rounds, try to fetch from server
+      if (_rounds.isEmpty) {
+        try {
+          final remote = await Api.getRounds(widget.gameId);
+          if (remote.isNotEmpty) {
+            _rounds.clear();
+            _rounds.addAll(remote);
+            try {
+              final box = Hive.box('live_cache');
+              box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
       // load last round details from server if cached rounds exist
       try {
-        _loadLastRoundDetails();
+        await _loadLastRoundDetails();
       } catch (_) {}
       // fetch game metadata to initialize mode (e.g., Pitch & Putt)
       try {
@@ -208,6 +222,12 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               final ts = msg['ts'] ?? '';
               _events.insert(0, '$ts $player: hole $hole -> $strokes');
             });
+            if (round != null) {
+              // refresh last-round details asynchronously
+              try {
+                _loadLastRoundDetails();
+              } catch (_) {}
+            }
           } else if (msg is Map && msg['type'] == 'round_created') {
             try {
               final r = Map<String, dynamic>.from(msg['round'] as Map? ?? {});
@@ -324,6 +344,28 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         );
         return;
       }
+      // Ensure we have a round id associated; create one if missing
+      if (_currentRoundId == null) {
+        try {
+          final res = await Api.createRound(widget.gameId);
+          final rid = res['id'] as int? ?? (res['round_id'] as int?);
+          if (rid != null) {
+            setState(() {
+              _currentRoundId = rid;
+            });
+            try {
+              _rounds.add({
+                'id': rid,
+                'round_number': (_rounds.length + 1),
+                'started_at': DateTime.now().toIso8601String(),
+              });
+              final box = Hive.box('live_cache');
+              box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       await Api.addStroke(
         widget.gameId,
         player,
@@ -344,6 +386,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         );
       });
       _saveCache();
+      // refresh last-round details so the UI table reflects the new stroke
+      try {
+        await _loadLastRoundDetails();
+      } catch (_) {}
       // add dedupe key so when server echoes the stroke we don't double-apply
       final dedupeKey =
           '$player|$_currentHole|$_strokesToAdd|${_currentRoundId ?? ''}';

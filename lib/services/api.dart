@@ -211,6 +211,17 @@ class Api {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  static Future<List<Map<String, dynamic>>> getRounds(int gameId) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.get(Uri.parse('$baseUrl/games/$gameId/rounds'), headers: headers);
+    if (res.statusCode == 200) {
+      final list = jsonDecode(res.body) as List<dynamic>;
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    throw Exception('Failed to list rounds: ${res.statusCode} ${res.body}');
+  }
+
   // Admin: trigger an immediate update (git pull / pub get) — server will exit to allow restart
   static Future<Map<String, dynamic>> triggerUpdate() async {
     final headers = <String, String>{'content-type': 'application/json'};

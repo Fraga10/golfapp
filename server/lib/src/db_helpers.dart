@@ -6,13 +6,13 @@ Future<Map<String, dynamic>> fetchCanonicalGameState(int gid) async {
     'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number',
     substitutionValues: {'gid': gid},
   );
-  final Map<String, Map<int, int>> players = {};
+  final Map<String, Map<String, int>> players = {};
   final Map<String, int> totals = {};
   for (final r in rows) {
     final pname = r[0] as String;
     final hole = (r[1] as int);
     final ssum = (r[2] as int?) ?? 0;
-    players.putIfAbsent(pname, () => {})[hole] = ssum;
+    players.putIfAbsent(pname, () => {})[hole.toString()] = ssum;
     totals[pname] = (totals[pname] ?? 0) + ssum;
   }
   return {'players': players, 'totals': totals};
@@ -24,13 +24,13 @@ Future<Map<String, dynamic>> fetchRoundDetails(int roundId) async {
     'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE round_id = @rid GROUP BY player_name, hole_number',
     substitutionValues: {'rid': roundId},
   );
-  final Map<String, Map<int, int>> players = {};
+  final Map<String, Map<String, int>> players = {};
   final Map<String, int> totals = {};
   for (final r in rows) {
     final pname = r[0] as String;
     final hole = (r[1] as int);
     final ssum = (r[2] as int?) ?? 0;
-    players.putIfAbsent(pname, () => {})[hole] = ssum;
+    players.putIfAbsent(pname, () => {})[hole.toString()] = ssum;
     totals[pname] = (totals[pname] ?? 0) + ssum;
   }
   return {'players': players, 'totals': totals};
