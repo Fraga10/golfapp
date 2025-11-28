@@ -208,6 +208,39 @@ Handler createHandler() {
     }
   }
 
+  // Helper: send a JSON payload string to all sockets listening on a game
+  void sendToGameSockets(int gid, String payload) {
+    final sockets = _gameSockets[gid];
+    if (sockets != null) {
+      for (final s in sockets) {
+        try {
+          s.sink.add(payload);
+        } catch (_) {}
+      }
+    }
+  }
+
+  // Helper: build and broadcast the canonical game_state for a game
+  Future<void> broadcastGameStateFor(int gid) async {
+    try {
+      final rows = await DB.conn.query(
+        'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number',
+        substitutionValues: {'gid': gid},
+      );
+      final Map<String, Map<int, int>> players = {};
+      final Map<String, int> totals = {};
+      for (final r in rows) {
+        final pname = r[0] as String;
+        final hole = (r[1] as int);
+        final ssum = (r[2] as int?) ?? 0;
+        players.putIfAbsent(pname, () => {})[hole] = ssum;
+        totals[pname] = (totals[pname] ?? 0) + ssum;
+      }
+      final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+      sendToGameSockets(gid, statePayload);
+    } catch (_) {}
+  }
+
   router.get('/health', (Request req) => Response.ok(jsonEncode({'ok': true}), headers: {'content-type': 'application/json'}));
 
   // Temporary debug endpoint
@@ -520,12 +553,7 @@ Handler createHandler() {
           roundId = ins.first[0] as int;
           // notify websockets about new round
           final rpayload = jsonEncode({'type': 'round_created', 'game_id': gid, 'round_id': roundId, 'round_number': roundNumber, 'ts': DateTime.now().toIso8601String()});
-          final rsockets = _gameSockets[gid];
-          if (rsockets != null) {
-            for (final s in rsockets) {
-              try { s.sink.add(rpayload); } catch (_) {}
-            }
-          }
+          sendToGameSockets(gid, rpayload);
         }
       }
     } catch (e) {
@@ -589,36 +617,8 @@ Handler createHandler() {
       'ts': DateTime.now().toIso8601String(),
       'overwrite': overwrite,
     });
-    final sockets = _gameSockets[gid];
-    if (sockets != null) {
-      for (final s in sockets) {
-        try {
-          s.sink.add(payload);
-        } catch (_) {}
-      }
-    }
-
-    // Broadcast full canonical game state (players -> hole -> strokes + totals)
-    try {
-      final rows = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
-      final Map<String, Map<int, int>> players = {};
-      final Map<String, int> totals = {};
-      for (final r in rows) {
-        final pname = r[0] as String;
-        final hole = (r[1] as int);
-        final ssum = (r[2] as int);
-        players.putIfAbsent(pname, () => {})[hole] = ssum;
-        totals[pname] = (totals[pname] ?? 0) + ssum;
-      }
-      final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
-      if (sockets != null) {
-        for (final s in sockets) {
-          try {
-            s.sink.add(statePayload);
-          } catch (_) {}
-        }
-      }
-    } catch (_) {}
+    sendToGameSockets(gid, payload);
+    await broadcastGameStateFor(gid);
 
     return Response(201, body: jsonEncode({'ok': true}), headers: {'content-type': 'application/json'});
   });
@@ -635,12 +635,7 @@ Handler createHandler() {
       final ins = await DB.conn.query('INSERT INTO rounds (game_id, round_number, created_by) VALUES (@gid, @rnum, @cb) RETURNING id', substitutionValues: {'gid': gid, 'rnum': roundNumber, 'cb': createdBy});
       final roundId = ins.first[0] as int;
       final payload = jsonEncode({'type': 'round_created', 'game_id': gid, 'round_id': roundId, 'round_number': roundNumber, 'ts': DateTime.now().toIso8601String()});
-      final sockets = _gameSockets[gid];
-      if (sockets != null) {
-        for (final s in sockets) {
-          try { s.sink.add(payload); } catch (_) {}
-        }
-      }
+      sendToGameSockets(gid, payload);
       return Response(201, body: jsonEncode({'id': roundId, 'round_number': roundNumber}), headers: {'content-type': 'application/json'});
     } catch (e) {
       return Response(500, body: 'Error creating round: $e');
@@ -668,31 +663,8 @@ Handler createHandler() {
         totals[r[0] as String] = (r[1] as int?) ?? 0;
       }
       final payload = jsonEncode({'type': 'round_completed', 'game_id': gid, 'round_id': roundId, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
-      final sockets = _gameSockets[gid];
-      if (sockets != null) {
-        for (final s in sockets) {
-          try { s.sink.add(payload); } catch (_) {}
-        }
-      }
-      // broadcast canonical game_state
-      try {
-        final rows2 = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
-        final Map<String, Map<int, int>> players = {};
-        final Map<String, int> totalsAll = {};
-        for (final r in rows2) {
-          final pname = r[0] as String;
-          final hole = (r[1] as int);
-          final ssum = (r[2] as int);
-          players.putIfAbsent(pname, () => {})[hole] = ssum;
-          totalsAll[pname] = (totalsAll[pname] ?? 0) + ssum;
-        }
-        final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totalsAll, 'ts': DateTime.now().toIso8601String()});
-        if (sockets != null) {
-          for (final s in sockets) {
-            try { s.sink.add(statePayload); } catch (_) {}
-          }
-        }
-      } catch (_) {}
+      sendToGameSockets(gid, payload);
+      await broadcastGameStateFor(gid);
       return Response.ok(jsonEncode({'ok': true, 'totals': totals}), headers: {'content-type': 'application/json'});
     } catch (e) {
       return Response(500, body: 'Error completing round: $e');
@@ -726,10 +698,7 @@ Handler createHandler() {
       // mark game as finished
       try { await DB.conn.query("UPDATE games SET status='finished' WHERE id = @gid", substitutionValues: {'gid': gid}); } catch (_) {}
       final payload = jsonEncode({'type': 'game_finalized', 'game_id': gid, 'winner': winner, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
-      final sockets = _gameSockets[gid];
-      if (sockets != null) {
-        for (final s in sockets) { try { s.sink.add(payload); } catch (_) {} }
-      }
+      sendToGameSockets(gid, payload);
       return Response.ok(jsonEncode({'ok': true, 'winner': winner, 'totals': totals}), headers: {'content-type': 'application/json'});
     } catch (e) {
       return Response(500, body: 'Error finalizing game: $e');
@@ -754,37 +723,10 @@ Handler createHandler() {
       await DB.conn.query('INSERT INTO game_players (game_id, player_name) VALUES (@gid, @p)', substitutionValues: {'gid': gid, 'p': playerName});
       // notify websockets
       final payload = jsonEncode({'type': 'player_joined', 'game_id': gid, 'player_name': playerName, 'ts': DateTime.now().toIso8601String()});
-      final sockets = _gameSockets[gid];
-      if (sockets != null) {
-        for (final s in sockets) {
-          try {
-            s.sink.add(payload);
-          } catch (_) {}
-        }
-      }
+      sendToGameSockets(gid, payload);
     }
       // Also broadcast a canonical `game_state` to ensure all clients are in sync
-      final sockets = _gameSockets[gid];
-      try {
-        final rows = await DB.conn.query('SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number', substitutionValues: {'gid': gid});
-        final Map<String, Map<int, int>> players = {};
-        final Map<String, int> totals = {};
-        for (final r in rows) {
-          final pname = r[0] as String;
-          final hole = (r[1] as int);
-          final ssum = (r[2] as int);
-          players.putIfAbsent(pname, () => {})[hole] = ssum;
-          totals[pname] = (totals[pname] ?? 0) + ssum;
-        }
-        final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
-        if (sockets != null) {
-          for (final s in sockets) {
-            try {
-              s.sink.add(statePayload);
-            } catch (_) {}
-          }
-        }
-      } catch (_) {}
+      await broadcastGameStateFor(gid);
     return Response(201, body: jsonEncode({'ok': true, 'player_name': playerName}), headers: {'content-type': 'application/json'});
   });
 
