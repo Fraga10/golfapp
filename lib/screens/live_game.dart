@@ -948,29 +948,55 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                         )
                       : _lastRoundPlayers.isEmpty
                           ? const Text('Nenhum round jogado ainda.')
-                          : SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                columns: [
-                                  const DataColumn(label: Text('Player')),
-                                  // compute holes present
-                                  ..._computeLastRoundHoles().map((h) => DataColumn(label: Text('$h'))),
-                                  const DataColumn(label: Text('Total')),
-                                ],
-                                rows: _lastRoundPlayers.keys.map((pname) {
-                                  final hm = _lastRoundPlayers[pname] ?? {};
-                                  final holes = _computeLastRoundHoles();
-                                  int total = _lastRoundTotals[pname] ?? 0;
-                                  final cells = <DataCell>[DataCell(Text(pname))];
-                                  for (final h in holes) {
-                                    final v = hm[h];
-                                    cells.add(DataCell(Text(v == null ? '-' : '$v')));
+                            : (() {
+                                final holes = _computeLastRoundHoles();
+                                String? winner;
+                                if (_lastRoundTotals.isNotEmpty) {
+                                  try {
+                                    winner = _lastRoundTotals.entries.reduce((a, b) => a.value <= b.value ? a : b).key;
+                                  } catch (_) {
+                                    winner = null;
                                   }
-                                  cells.add(DataCell(Text('$total')));
-                                  return DataRow(cells: cells);
-                                }).toList(),
-                              ),
-                            ),
+                                }
+                                return SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: DataTable(
+                                    columns: [
+                                      const DataColumn(label: Text('Player')),
+                                      // holes present
+                                      ...holes.map((h) => DataColumn(label: Text('$h'))),
+                                      const DataColumn(label: Text('Total')),
+                                    ],
+                                    rows: _lastRoundPlayers.keys.map((pname) {
+                                      final hm = _lastRoundPlayers[pname] ?? {};
+                                      int total = _lastRoundTotals[pname] ?? 0;
+                                      final cells = <DataCell>[];
+                                      // name cell with winner icon
+                                      final isWinner = (winner != null && winner == pname);
+                                      cells.add(
+                                        DataCell(Row(
+                                          children: [
+                                            if (isWinner) ...[
+                                              Icon(Icons.star, size: 16, color: Colors.green[800]),
+                                              const SizedBox(width: 6),
+                                            ],
+                                            Text(pname),
+                                          ],
+                                        )),
+                                      );
+                                      for (final h in holes) {
+                                        final v = hm[h];
+                                        cells.add(DataCell(Text(v == null ? '-' : '$v')));
+                                      }
+                                      cells.add(DataCell(Text('$total')));
+                                      return DataRow(
+                                        color: isWinner ? MaterialStateProperty.all(Colors.greenAccent.withAlpha(70)) : null,
+                                        cells: cells,
+                                      );
+                                    }).toList(),
+                                  ),
+                                );
+                              })(),
                 ],
               ),
             ),
