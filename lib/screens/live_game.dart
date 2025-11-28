@@ -34,6 +34,11 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   int? _currentRoundId;
   // list of rounds (id, round_number, started_at, finished_at)
   final List<Map<String, dynamic>> _rounds = [];
+  // cached details for the last finished round
+  Map<String, Map<int, int>> _lastRoundPlayers = {};
+  Map<String, int> _lastRoundTotals = {};
+  int? _lastRoundIdLoaded;
+  bool _loadingLastRound = false;
   // Completer to await canonical game_state when deciding to prompt for next round
   Completer<Map<String, dynamic>>? _pendingGameStateCompleter;
   // Track recent local writes to avoid showing duplicates when the server echoes the stroke
@@ -46,6 +51,67 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     super.initState();
     // load cached scores if present (async)
     _initCacheAndWs();
+  }
+
+  List<int> _computeLastRoundHoles() {
+    final holes = <int>{};
+    _lastRoundPlayers.forEach((_, hm) {
+      hm.keys.forEach((h) => holes.add(h));
+    });
+    final list = holes.toList()..sort();
+    return list;
+  }
+
+  Future<void> _loadLastRoundDetails() async {
+    try {
+      if (_rounds.isEmpty) return;
+      // prefer last finished round, otherwise last created
+      Map<String, dynamic>? last;
+      for (var i = _rounds.length - 1; i >= 0; i--) {
+        final candidate = _rounds[i];
+        if (candidate['finished_at'] != null) {
+          last = candidate;
+          break;
+        }
+      }
+      if (last == null && _rounds.isNotEmpty) last = _rounds.last;
+      if (last == null) return;
+      final rid = last['id'] as int?;
+      if (rid == null) return;
+      if (_lastRoundIdLoaded != null && _lastRoundIdLoaded == rid) return;
+      setState(() {
+        _loadingLastRound = true;
+      });
+      final resp = await Api.getRound(widget.gameId, rid);
+      final playersRaw = (resp['players'] as Map?) ?? {};
+      final Map<String, Map<int, int>> players = {};
+      final Map<String, int> totals = {};
+      playersRaw.forEach((k, v) {
+        final pname = k.toString();
+        final hm = <int, int>{};
+        if (v is Map) {
+          v.forEach((hk, hv) {
+            final hn = int.tryParse(hk.toString()) ?? 0;
+            if (hn > 0) {
+              final val = (hv is num) ? hv.toInt() : (int.tryParse(hv.toString()) ?? 0);
+              hm[hn] = val;
+              totals[pname] = (totals[pname] ?? 0) + val;
+            }
+          });
+        }
+        players[pname] = hm;
+      });
+      setState(() {
+        _lastRoundPlayers = players;
+        _lastRoundTotals = totals;
+        _lastRoundIdLoaded = rid;
+        _loadingLastRound = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loadingLastRound = false;
+      });
+    }
   }
 
   Future<void> _initCacheAndWs() async {
@@ -85,6 +151,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
             _rounds.addAll(rr.map((e) => Map<String, dynamic>.from(e as Map)));
           }
         }
+      } catch (_) {}
+      // load last round details from server if cached rounds exist
+      try {
+        _loadLastRoundDetails();
       } catch (_) {}
       // fetch game metadata to initialize mode (e.g., Pitch & Putt)
       try {
@@ -151,6 +221,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     '${msg['ts'] ?? ''} round_created: ${r['id']}',
                   );
                 });
+                _loadLastRoundDetails();
                 try {
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
@@ -173,6 +244,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                       '${msg['ts'] ?? ''} round_completed: $rid',
                     );
                   });
+                  _loadLastRoundDetails();
                   try {
                     final box = Hive.box('live_cache');
                     box.put(
@@ -387,6 +459,7 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   _rounds.add(r);
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+                  _loadLastRoundDetails();
                 } catch (_) {}
               } catch (e) {
                 if (!mounted) return;
@@ -866,14 +939,38 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   ],
                   _buildScoreTable(),
                   const SizedBox(height: 12),
-                  const Text('Eventos (últimos primeiro):'),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _events.length,
-                    itemBuilder: (context, index) =>
-                        ListTile(title: Text(_events[index])),
-                  ),
+                  const Text('Último round (detalhes):'),
+                  const SizedBox(height: 6),
+                  _loadingLastRound
+                      ? const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: CircularProgressIndicator(),
+                        )
+                      : _lastRoundPlayers.isEmpty
+                          ? const Text('Nenhum round jogado ainda.')
+                          : SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: DataTable(
+                                columns: [
+                                  const DataColumn(label: Text('Player')),
+                                  // compute holes present
+                                  ..._computeLastRoundHoles().map((h) => DataColumn(label: Text('$h'))),
+                                  const DataColumn(label: Text('Total')),
+                                ],
+                                rows: _lastRoundPlayers.keys.map((pname) {
+                                  final hm = _lastRoundPlayers[pname] ?? {};
+                                  final holes = _computeLastRoundHoles();
+                                  int total = _lastRoundTotals[pname] ?? 0;
+                                  final cells = <DataCell>[DataCell(Text(pname))];
+                                  for (final h in holes) {
+                                    final v = hm[h];
+                                    cells.add(DataCell(Text(v == null ? '-' : '$v')));
+                                  }
+                                  cells.add(DataCell(Text('$total')));
+                                  return DataRow(cells: cells);
+                                }).toList(),
+                              ),
+                            ),
                 ],
               ),
             ),
