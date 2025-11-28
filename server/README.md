@@ -78,12 +78,75 @@ After=network.target
 WorkingDirectory=/opt/golfe/server
 ExecStart=/usr/bin/dart run bin/server.dart
 Restart=on-failure
-User=www-data
+Golfe — Server (Dart Shelf)
 
-[Install]
-WantedBy=multi-user.target
+Resumo
+- Backend implementado em Dart usando `shelf` + `shelf_router`.
+- Expõe API REST para gerir jogos, jogadores, rounds e tacadas (strokes).
+- Fornece WebSocket para sincronização em tempo-real: `ws://<host>/ws/games/<gameId>`.
+- Usa PostgreSQL; o esquema consolidado está em `server/migrations/init.sql`.
+
+Pré-requisitos
+- Dart SDK instalado.
+- PostgreSQL acessível e configurado.
+
+Variáveis de ambiente úteis
+- `DATABASE_URL` — URI do Postgres (ex.: `postgres://user:pass@localhost:5432/dbname`).
+- `PORT` — porta para o servidor (padrão: `18080`).
+
+Migrations
+- O esquema canónico encontra-se em `server/migrations/init.sql`.
+- Ferramenta de aplicação de migrations: `server/tools/apply_migration.dart`.
+
+Aplicar o esquema (PowerShell):
+```powershell
+cd 'c:\Users\rodri\OneDrive\Ambiente de Trabalho\APPs\golfe\server'
+dart pub get
+dart run tools/apply_migration.dart
 ```
 
-Security / Auth
----------------
-This scaffold does not implement full authentication. For multi-user production, add JWT authentication or API keys and enforce HTTPS.
+Executar o servidor
+```powershell
+cd server
+dart run bin/server.dart
+```
+Por omissão o servidor escuta em `http://localhost:18080` (ou `PORT`).
+
+Principais endpoints HTTP
+- `GET /health` — verifica saúde do servidor.
+- `GET /games` — lista jogos.
+- `GET /games/:id` — obter jogo.
+- `POST /games` — criar jogo.
+- `PATCH /games/:id` — atualizar jogo.
+- `POST /games/:id/players` — adicionar jogador.
+- `POST /games/:id/strokes` — inserir tacada (aceita `round_id` opcional). Retorna `201`.
+- `POST /games/:id/rounds` — criar round (Pitch & Putt).
+- `PATCH /games/:id/rounds/:rid/complete` — finalizar round.
+- `POST /games/:id/finalize` — finalizar jogo e computar vencedor.
+
+WebSocket
+- `ws://<host>/ws/games/<gameId>`: cliente recebe mensagens do tipo `stroke`, `game_state`, `round_created`, `round_completed`, `player_joined`, `game_finalized`.
+- `ws://<host>/ws/admin/updates`: notificações de administração (opcional).
+
+Autenticação e permissões
+- Endpoints sensíveis exigem `Authorization: Bearer <api_key>`.
+- Roles: `admin`, `editor`, `player`, `viewer` (cada uma com permissões específicas).
+
+Notas
+- O schema consolidado incluiu `rounds` e `strokes.round_id` para suportar rounds.
+- Uma rota admin de debug para listar strokes foi removida do código principal para evitar exposição acidental.
+
+Ficheiros principais
+- `server/lib/src/app.dart` — lógica das rotas e WebSockets.
+- `server/migrations/init.sql` — esquema SQL consolidado.
+- `server/bin/server.dart` — entrypoint.
+
+Debug
+- Healthcheck:
+```powershell
+Invoke-RestMethod -Uri http://localhost:18080/health -Method GET
+```
+- Ver conexões WS: `ws_connections.log` (o servidor escreve quando sockets conectam).
+
+Contribuição
+- Ao alterar a API, documente a rota e actualize este README.

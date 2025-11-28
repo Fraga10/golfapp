@@ -1,55 +1,31 @@
 # golfe
 
-A new Flutter project.
+Golfe é um aplicativo Flutter para registo de tacadas e rounds (suporte a Pitch & Putt).
 
-## Getting Started
+Este repositório contém duas peças principais:
+- `server/` — backend em Dart (Shelf) que expõe a API REST e WebSocket para sincronização em tempo-real.
+- Flutter app (root + `lib/`) — cliente mobile/desktop com UI de jogo ao vivo.
 
-This project is a starting point for a Flutter application.
+Resumo rápido (passos mínimos para executar o projecto)
 
-A few resources to get you started if this is your first Flutter project:
+1. Configure o Postgres e aplique o esquema (arquivo canónico em `server/migrations/init.sql`).
+2. Execute o servidor Dart (padrão: `http://localhost:18080`).
+3. Abra a app Flutter (`flutter run`) — o cliente usa `API_BASE_URL` (opcional) ou `http://localhost:18080` por omissão.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+Onde ler mais
+- `server/README.md` — instruções para configurar, rodar e detalhes das rotas do backend.
+- `lib/README.md` — notas sobre o cliente Flutter, boxes Hive usados, e pontos de extensão.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
-## Database migrations (server)
-
-This project uses a consolidated SQL schema in `server/migrations/init.sql` and provides simple Dart tooling to apply and check the schema against your Postgres database.
-
-- **Apply the schema (default)** — runs `migrations/init.sql` by default:
+Quick troubleshooting
+- Checar saúde do servidor:
 
 ```powershell
-cd 'c:\Users\rodri\OneDrive\Ambiente de Trabalho\APPs\golfe\server'
-dart pub get
-dart run tools/apply_migration.dart
+Invoke-RestMethod -Uri http://localhost:18080/health -Method GET
 ```
 
-- **Apply a specific migration file** (if needed):
+- Checar WebSocket (exemplo): `ws://localhost:18080/ws/games/<gameId>`
 
-```powershell
-dart run tools/apply_migration.dart migrations/20251127_add_rounds.sql
-```
+Contribuição
+- Siga as convenções de migrations e atualize a documentação quando alterar a API.
 
-- **Check schema** — lists the important tables/columns (users, games, game_players, rounds, strokes):
-
-```powershell
-dart run tools/check_migration.dart
-```
-
-Notes:
-- `tools/apply_migration.dart` will default to `migrations/init.sql` when no path is provided.
-- `migrations/init.sql` is the canonical consolidated schema (it contains `games.mode`, the `rounds` table and `strokes.round_id`).
-- If your DB credentials are different, edit `server/.env` so the migration tools connect to the correct Postgres instance.
-
-If you prefer to keep separate migration files, you can still run them individually with `tools/apply_migration.dart <path>`; this repo currently keeps a single consolidated `init.sql` for simplicity.
-
-### Repo workflow note (please follow)
-
-- Quando adicionarmos uma nova *feature* que altera a API ou o comportamento, atualize o `README.md` com uma breve nota explicando a funcionalidade e como testá-la.
-- Quando consolidarmos o esquema numa `init.sql`, remova os ficheiros de migration SQL individuais que já não são usados (por exemplo `20251127_add_rounds.sql`) para evitar confusão.
-- Use `tools/check_migration.dart` para validar o esquema após aplicar migrations.
-
-Seguindo estas regras mantemos o repositório limpo e a documentação atualizada.
+Para detalhes específicos sobre server e client veja os respetivos `README.md`.
