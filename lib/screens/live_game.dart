@@ -39,6 +39,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   Map<String, int> _lastRoundTotals = {};
   int? _lastRoundIdLoaded;
   bool _loadingLastRound = false;
+  // track the last finished round id explicitly to avoid races with newly-created rounds
+  int? _lastFinishedRoundId;
   // Completer to await canonical game_state when deciding to prompt for next round
   Completer<Map<String, dynamic>>? _pendingGameStateCompleter;
   // Track recent local writes to avoid showing duplicates when the server echoes the stroke
@@ -56,27 +58,34 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   List<int> _computeLastRoundHoles() {
     final holes = <int>{};
     _lastRoundPlayers.forEach((_, hm) {
-      hm.keys.forEach((h) => holes.add(h));
+      for (var h in hm.keys) {
+        holes.add(h);
+      }
     });
     final list = holes.toList()..sort();
     return list;
   }
 
   Future<void> _loadLastRoundDetails() async {
+    if (_loadingLastRound) return;
     try {
       if (_rounds.isEmpty) return;
-      // prefer last finished round, otherwise last created
+      // prefer explicit last finished round id if we have it
+      int? rid = _lastFinishedRoundId;
       Map<String, dynamic>? last;
-      for (var i = _rounds.length - 1; i >= 0; i--) {
-        final candidate = _rounds[i];
-        if (candidate['finished_at'] != null) {
-          last = candidate;
-          break;
+      if (rid == null) {
+        // find last finished round
+        for (var i = _rounds.length - 1; i >= 0; i--) {
+          final candidate = _rounds[i];
+          if (candidate['finished_at'] != null) {
+            last = candidate;
+            break;
+          }
         }
+        if (last == null && _rounds.isNotEmpty) last = _rounds.last;
+        if (last == null) return;
+        rid = last['id'] as int?;
       }
-      if (last == null && _rounds.isNotEmpty) last = _rounds.last;
-      if (last == null) return;
-      final rid = last['id'] as int?;
       if (rid == null) return;
       if (_lastRoundIdLoaded != null && _lastRoundIdLoaded == rid) return;
       setState(() {
@@ -101,16 +110,59 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         }
         players[pname] = hm;
       });
+      if (!mounted) return;
       setState(() {
         _lastRoundPlayers = players;
         _lastRoundTotals = totals;
         _lastRoundIdLoaded = rid;
-        _loadingLastRound = false;
+        // if this round is finished, record it explicitly
+        _lastFinishedRoundId = rid;
       });
     } catch (e) {
-      setState(() {
-        _loadingLastRound = false;
+      // ignore errors; we still ensure the loading flag is cleared below
+    } finally {
+      if (mounted) setState(() => _loadingLastRound = false);
+    }
+  }
+
+  Future<void> _loadRoundDetails(int rid) async {
+    if (_loadingLastRound) return;
+    try {
+      setState(() { _loadingLastRound = true; });
+      final resp = await Api.getRound(widget.gameId, rid);
+      final playersRaw = (resp['players'] as Map?) ?? {};
+      final Map<String, Map<int, int>> players = {};
+      final Map<String, int> totals = {};
+      playersRaw.forEach((k, v) {
+        final pname = k.toString();
+        final hm = <int, int>{};
+        if (v is Map) {
+          v.forEach((hk, hv) {
+            final hn = int.tryParse(hk.toString()) ?? 0;
+            if (hn > 0) {
+              final val = (hv is num) ? hv.toInt() : (int.tryParse(hv.toString()) ?? 0);
+              hm[hn] = val;
+              totals[pname] = (totals[pname] ?? 0) + val;
+            }
+          });
+        }
+        players[pname] = hm;
       });
+      if (!mounted) return;
+      setState(() {
+        _lastRoundPlayers = players;
+        _lastRoundTotals = totals;
+        _lastRoundIdLoaded = rid;
+        // if this round is finished, remember it
+        final idx = _rounds.indexWhere((rr) => rr['id'] == rid);
+        if (idx != -1 && _rounds[idx]['finished_at'] != null) {
+          _lastFinishedRoundId = rid;
+        }
+      });
+    } catch (e) {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _loadingLastRound = false);
     }
   }
 
@@ -196,6 +248,16 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         }
       } catch (_) {}
     } catch (_) {}
+    // initialize _lastFinishedRoundId from cached rounds if we have one
+    try {
+      for (var i = _rounds.length - 1; i >= 0; i--) {
+        final candidate = _rounds[i];
+        if (candidate['finished_at'] != null) {
+          _lastFinishedRoundId = candidate['id'] as int?;
+          break;
+        }
+      }
+    } catch (_) {}
     final channel = _channel = Api.wsForGame(widget.gameId);
     _sub = channel.stream.listen(
       (data) {
@@ -223,9 +285,18 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               _events.insert(0, '$ts $player: hole $hole -> $strokes');
             });
             if (round != null) {
-              // refresh last-round details asynchronously
+              // Only refresh last-round details if this stroke belongs to the
+              // last finished round we currently know about. Avoid re-loading
+              // when the server announces a newly-created (empty) round which
+              // would overwrite the finished round view.
               try {
-                _loadLastRoundDetails();
+                final lastFinished = _rounds.isNotEmpty
+                    ? _rounds.lastWhere((r) => r['finished_at'] != null, orElse: () => <String, dynamic>{})
+                    : <String, dynamic>{};
+                final lastRid = lastFinished.isNotEmpty ? (lastFinished['id'] as int?) : null;
+                if (lastRid != null && lastRid == round) {
+                  _loadLastRoundDetails();
+                }
               } catch (_) {}
             }
           } else if (msg is Map && msg['type'] == 'round_created') {
@@ -241,7 +312,6 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     '${msg['ts'] ?? ''} round_created: ${r['id']}',
                   );
                 });
-                _loadLastRoundDetails();
                 try {
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
@@ -264,7 +334,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                       '${msg['ts'] ?? ''} round_completed: $rid',
                     );
                   });
-                  _loadLastRoundDetails();
+                  // mark last finished round explicitly and load it
+                  _lastFinishedRoundId = rid;
+                  _loadRoundDetails(rid);
                   try {
                     final box = Hive.box('live_cache');
                     box.put(
@@ -386,10 +458,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         );
       });
       _saveCache();
-      // refresh last-round details so the UI table reflects the new stroke
-      try {
-        await _loadLastRoundDetails();
-      } catch (_) {}
+      // Do not reload last-round details here — the WebSocket and
+      // round_completed events will update the last-round view when
+      // appropriate. Reloading here can accidentally load a newly-created
+      // empty round and hide the finished round's table.
       // add dedupe key so when server echoes the stroke we don't double-apply
       final dedupeKey =
           '$player|$_currentHole|$_strokesToAdd|${_currentRoundId ?? ''}';
@@ -481,6 +553,12 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
 
             if (playMore == true) {
               try {
+                // load details for the just-played round so the UI shows its table
+                try {
+                  if (_currentRoundId != null) {
+                    await _loadRoundDetails(_currentRoundId!);
+                  }
+                } catch (_) {}
                 final res = await Api.createRound(widget.gameId);
                 final rid = res['id'] as int? ?? (res['round_id'] as int?);
                 if (!mounted) return;
@@ -505,7 +583,6 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                   _rounds.add(r);
                   final box = Hive.box('live_cache');
                   box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
-                  _loadLastRoundDetails();
                 } catch (_) {}
               } catch (e) {
                 if (!mounted) return;
@@ -894,7 +971,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                                   v.forEach((hk, hv) {
                                     final hn = int.tryParse(hk.toString()) ?? 0;
                                     if (hn > 0) {
-                                      hm[hn] = (hv as int?) ?? 0;
+                                      final val = (hv is num)
+                                          ? hv.toInt()
+                                          : (int.tryParse(hv.toString()) ?? 0);
+                                      hm[hn] = val;
                                       holesSet.add(hn);
                                     }
                                   });
