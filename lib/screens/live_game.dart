@@ -11,7 +11,13 @@ class LiveGameScreen extends StatefulWidget {
   final String course;
   final int holes;
   final List<String>? initialPlayers;
-  const LiveGameScreen({super.key, required this.gameId, required this.course, this.holes = 18, this.initialPlayers});
+  const LiveGameScreen({
+    super.key,
+    required this.gameId,
+    required this.course,
+    this.holes = 18,
+    this.initialPlayers,
+  });
 
   @override
   State<LiveGameScreen> createState() => _LiveGameScreenState();
@@ -26,6 +32,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   String? _activePlayer;
   bool _pitchMode = false;
   int? _currentRoundId;
+  // list of rounds (id, round_number, started_at, finished_at)
+  final List<Map<String, dynamic>> _rounds = [];
+  // Completer to await canonical game_state when deciding to prompt for next round
+  Completer<Map<String, dynamic>>? _pendingGameStateCompleter;
   // Track recent local writes to avoid showing duplicates when the server echoes the stroke
   final Set<String> _recentLocalWrites = {};
   // player -> hole -> strokes
@@ -65,10 +75,24 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           _activePlayer ??= p;
         }
       }
+      // load cached rounds if present
+      try {
+        if (box.containsKey('${key}_rounds')) {
+          final rawRounds = box.get('${key}_rounds') as String?;
+          if (rawRounds != null) {
+            final rr = jsonDecode(rawRounds) as List<dynamic>;
+            _rounds.clear();
+            _rounds.addAll(rr.map((e) => Map<String, dynamic>.from(e as Map)));
+          }
+        }
+      } catch (_) {}
       // fetch game metadata to initialize mode (e.g., Pitch & Putt)
       try {
         final games = await Api.getGames();
-        final me = games.firstWhere((g) => (g['id'] as int) == widget.gameId, orElse: () => <String, dynamic>{});
+        final me = games.firstWhere(
+          (g) => (g['id'] as int) == widget.gameId,
+          orElse: () => <String, dynamic>{},
+        );
         if (me.isNotEmpty) {
           final mode = (me['mode'] as String?) ?? 'standard';
           setState(() {
@@ -89,62 +113,125 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       } catch (_) {}
     } catch (_) {}
     final channel = _channel = Api.wsForGame(widget.gameId);
-    _sub = channel.stream.listen((data) {
-      try {
-        final msg = data is String ? jsonDecode(data) : data;
-        if (msg is Map && msg['type'] == 'stroke') {
-          final player = msg['player_name'] as String? ?? 'Unknown';
-          final hole = (msg['hole_number'] as num?)?.toInt() ?? 1;
-          final strokes = (msg['strokes'] as num?)?.toInt() ?? 1;
-          final round = msg['round_id'] is int ? msg['round_id'] as int : (msg['round_id'] != null ? int.tryParse(msg['round_id'].toString()) : null);
-          final dedupeKey = '$player|$hole|$strokes|${round ?? ''}';
-          if (_recentLocalWrites.contains(dedupeKey)) {
-            // already applied locally — ignore this echo and remove dedupe marker
-            _recentLocalWrites.remove(dedupeKey);
-            return;
-          }
-          setState(() {
-            final p = _scores.putIfAbsent(player, () => <int, int>{});
-            p[hole] = (p[hole] ?? 0) + strokes;
-            final ts = msg['ts'] ?? '';
-            _events.insert(0, '$ts $player: hole $hole -> $strokes');
-          });
-        } else if (msg is Map && msg['type'] == 'game_state') {
-          // Canonical state from server: replace local scores
-          try {
-            final players = (msg['players'] as Map?)?.cast<String, dynamic>() ?? {};
+    _sub = channel.stream.listen(
+      (data) {
+        try {
+          final msg = data is String ? jsonDecode(data) : data;
+          if (msg is Map && msg['type'] == 'stroke') {
+            final player = msg['player_name'] as String? ?? 'Unknown';
+            final hole = (msg['hole_number'] as num?)?.toInt() ?? 1;
+            final strokes = (msg['strokes'] as num?)?.toInt() ?? 1;
+            final round = msg['round_id'] is int
+                ? msg['round_id'] as int
+                : (msg['round_id'] != null
+                      ? int.tryParse(msg['round_id'].toString())
+                      : null);
+            final dedupeKey = '$player|$hole|$strokes|${round ?? ''}';
+            if (_recentLocalWrites.contains(dedupeKey)) {
+              // already applied locally — ignore this echo and remove dedupe marker
+              _recentLocalWrites.remove(dedupeKey);
+              return;
+            }
             setState(() {
-              _scores.clear();
-              players.forEach((player, holesMap) {
-                final Map<int, int> hm = {};
-                if (holesMap is Map) {
-                  holesMap.forEach((k, v) {
-                    hm[int.parse(k.toString())] = (v as num).toInt();
+              final p = _scores.putIfAbsent(player, () => <int, int>{});
+              p[hole] = (p[hole] ?? 0) + strokes;
+              final ts = msg['ts'] ?? '';
+              _events.insert(0, '$ts $player: hole $hole -> $strokes');
+            });
+          } else if (msg is Map && msg['type'] == 'round_created') {
+            try {
+              final r = Map<String, dynamic>.from(msg['round'] as Map? ?? {});
+              final exists = _rounds.any((rr) => rr['id'] == r['id']);
+              if (!exists) {
+                setState(() {
+                  _rounds.add(r);
+                  _currentRoundId = r['id'] as int? ?? _currentRoundId;
+                  _events.insert(
+                    0,
+                    '${msg['ts'] ?? ''} round_created: ${r['id']}',
+                  );
+                });
+                try {
+                  final box = Hive.box('live_cache');
+                  box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+                } catch (_) {}
+              }
+            } catch (_) {}
+          } else if (msg is Map && msg['type'] == 'round_completed') {
+            try {
+              final rid = msg['round_id'] is int
+                  ? msg['round_id'] as int
+                  : int.tryParse(msg['round_id'].toString());
+              if (rid != null) {
+                final idx = _rounds.indexWhere((rr) => rr['id'] == rid);
+                if (idx != -1) {
+                  setState(() {
+                    _rounds[idx]['finished_at'] =
+                        msg['finished_at'] ?? DateTime.now().toIso8601String();
+                    _events.insert(
+                      0,
+                      '${msg['ts'] ?? ''} round_completed: $rid',
+                    );
+                  });
+                  try {
+                    final box = Hive.box('live_cache');
+                    box.put(
+                      'game_${widget.gameId}_rounds',
+                      jsonEncode(_rounds),
+                    );
+                  } catch (_) {}
+                }
+              }
+            } catch (_) {}
+          } else if (msg is Map && msg['type'] == 'game_state') {
+            // Canonical state from server: replace local scores
+            try {
+              final players =
+                  (msg['players'] as Map?)?.cast<String, dynamic>() ?? {};
+              // If someone is awaiting canonical state for a prompt, complete it with the players map
+              try {
+                if (_pendingGameStateCompleter != null &&
+                    !_pendingGameStateCompleter!.isCompleted) {
+                  _pendingGameStateCompleter!.complete({
+                    'players': players,
+                    'ts': msg['ts'],
                   });
                 }
-                _scores[player] = hm;
+              } catch (_) {}
+              setState(() {
+                _scores.clear();
+                players.forEach((player, holesMap) {
+                  final Map<int, int> hm = {};
+                  if (holesMap is Map) {
+                    holesMap.forEach((k, v) {
+                      hm[int.parse(k.toString())] = (v as num).toInt();
+                    });
+                  }
+                  _scores[player] = hm;
+                });
+                _events.insert(0, '${msg['ts'] ?? ''} game_state sync');
               });
-              _events.insert(0, '${msg['ts'] ?? ''} game_state sync');
+              _saveCache();
+            } catch (e) {
+              setState(() => _events.insert(0, 'game_state parse error: $e'));
+            }
+          } else if (msg is Map && msg['type'] == 'player_joined') {
+            final pname = msg['player_name'] as String? ?? '';
+            setState(() {
+              _scores.putIfAbsent(pname, () => <int, int>{});
+              _events.insert(0, '${msg['ts'] ?? ''} player_joined: $pname');
             });
-            _saveCache();
-          } catch (e) {
-            setState(() => _events.insert(0, 'game_state parse error: $e'));
+          } else {
+            setState(() => _events.insert(0, data.toString()));
           }
-        } else if (msg is Map && msg['type'] == 'player_joined') {
-          final pname = msg['player_name'] as String? ?? '';
-          setState(() {
-            _scores.putIfAbsent(pname, () => <int, int>{});
-            _events.insert(0, '${msg['ts'] ?? ''} player_joined: $pname');
-          });
-        } else {
-          setState(() => _events.insert(0, data.toString()));
+        } catch (e) {
+          setState(() => _events.insert(0, 'WS parse error: $e'));
         }
-      } catch (e) {
-        setState(() => _events.insert(0, 'WS parse error: $e'));
-      }
-    }, onError: (e) {
-      setState(() => _events.insert(0, 'WS error: $e'));
-    });
+      },
+      onError: (e) {
+        setState(() => _events.insert(0, 'WS error: $e'));
+      },
+    );
   }
 
   @override
@@ -160,10 +247,18 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       final player = _activePlayer ?? 'Jogador';
       if (player.isEmpty) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione um jogador para marcar')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selecione um jogador para marcar')),
+        );
         return;
       }
-      await Api.addStroke(widget.gameId, player, _currentHole, _strokesToAdd, roundId: _currentRoundId);
+      await Api.addStroke(
+        widget.gameId,
+        player,
+        _currentHole,
+        _strokesToAdd,
+        roundId: _currentRoundId,
+      );
       if (!mounted) return;
       // Update UI immediately as a fallback in case the server's websocket
       // broadcast is delayed or not received. The canonical `game_state`
@@ -171,16 +266,23 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       setState(() {
         final p = _scores.putIfAbsent(player, () => <int, int>{});
         p[_currentHole] = (p[_currentHole] ?? 0) + _strokesToAdd;
-        _events.insert(0, 'Enviado: $player: hole $_currentHole -> $_strokesToAdd');
+        _events.insert(
+          0,
+          'Enviado: $player: hole $_currentHole -> $_strokesToAdd',
+        );
       });
       _saveCache();
       // add dedupe key so when server echoes the stroke we don't double-apply
-      final dedupeKey = '$player|$_currentHole|$_strokesToAdd|${_currentRoundId ?? ''}';
+      final dedupeKey =
+          '$player|$_currentHole|$_strokesToAdd|${_currentRoundId ?? ''}';
       _recentLocalWrites.add(dedupeKey);
       final messenger = ScaffoldMessenger.of(context);
       messenger.showSnackBar(const SnackBar(content: Text('Stroke enviado')));
       // auto-advance hole and initialize zeros; respect game's holes when set, otherwise allow up to 99
-      final maxAllowedHole = widget.holes > 0 ? widget.holes : 99;
+      final maxAllowedHole = _pitchMode
+          ? 3
+          : (widget.holes > 0 ? widget.holes : 99);
+      final oldHole = _currentHole;
       final shouldAdvance = _currentHole < maxAllowedHole;
       if (shouldAdvance) {
         final newHole = _currentHole + 1;
@@ -189,51 +291,168 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           _strokesToAdd = 1;
           for (final p in _scores.keys) {
             _scores[p] = _scores[p] ?? <int, int>{};
-            if (newHole <= maxAllowedHole) _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
+            if (newHole <= maxAllowedHole) {
+              _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
+            }
           }
         });
       }
-      // If in pitch mode and we reached hole 3, ask to continue or end round
-      if (_pitchMode && _currentHole == 3) {
-        // prompt the user
-        final playMore = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-          title: const Text('Round terminado'),
-          content: const Text('Queres jogar mais um round?'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Não, acabar')),
-            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sim, próximo')),
-          ],
-        ));
-        if (playMore == true) {
+
+      // If in pitch mode and we just completed hole 3 (oldHole == 3), ask to continue or end round
+      if (_pitchMode && oldHole == 3) {
+        // only prompt when ALL players have a non-zero entry for hole 3
+        final players = _scores.keys.toList();
+        final allHave3 =
+            players.isNotEmpty &&
+            players.every((p) => (_scores[p]?[3] ?? 0) > 0);
+        if (allHave3) {
+          // Wait for canonical game_state from server to avoid prompting prematurely.
+          _pendingGameStateCompleter = Completer<Map<String, dynamic>>();
+          Map<String, dynamic>? canonical;
           try {
-            final res = await Api.createRound(widget.gameId);
-            final rid = res['id'] as int? ?? (res['round_id'] as int?);
-            setState(() {
-              _currentRoundId = rid;
-              _currentHole = 1;
-            });
-            _saveCache();
-          } catch (e) {
+            // wait up to 3 seconds for server canonical state, otherwise fall back to local
+            canonical = await _pendingGameStateCompleter!.future.timeout(
+              const Duration(seconds: 3),
+            );
+          } catch (_) {
+            canonical = null;
             if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a criar round: $e')));
+          } finally {
+            _pendingGameStateCompleter = null;
           }
-        } else {
-          try {
-            if (_currentRoundId != null) {
-              await Api.completeRound(widget.gameId, _currentRoundId!);
+
+          bool shouldPrompt = false;
+          if (canonical != null && canonical['players'] is Map) {
+            final cp = (canonical['players'] as Map).cast<String, dynamic>();
+            final playersList = cp.keys.toList();
+            if (playersList.isNotEmpty) {
+              final allHave3Canonical = playersList.every((p) {
+                final holesMap = cp[p] as Map?;
+                final v = holesMap != null
+                    ? (holesMap['3'] ?? holesMap[3])
+                    : null;
+                final intVal = v is num
+                    ? v.toInt()
+                    : (v is String ? int.tryParse(v) ?? 0 : 0);
+                return intVal > 0;
+              });
+              shouldPrompt = allHave3Canonical;
             }
-            final stats = await Api.finalizeGame(widget.gameId);
-            if (!mounted) return;
-            await showDialog(context: context, builder: (_) => AlertDialog(title: const Text('Jogo finalizado'), content: SingleChildScrollView(child: Text('Vencedor: ${stats['winner']}\nTotals: ${stats['totals']}')), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))]));
-          } catch (e) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro a finalizar: $e')));
+          } else {
+            shouldPrompt = allHave3; // fallback to local state
+          }
+
+          if (shouldPrompt) {
+            final playMore = await showDialog<bool>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('Round terminado'),
+                content: const Text('Queres jogar mais um round?'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Não, acabar'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('Sim, próximo'),
+                  ),
+                ],
+              ),
+            );
+
+            if (playMore == true) {
+              try {
+                final res = await Api.createRound(widget.gameId);
+                final rid = res['id'] as int? ?? (res['round_id'] as int?);
+                if (!mounted) return;
+                setState(() {
+                  _currentRoundId = rid;
+                  _currentHole = 1;
+                  // Reset per-player scores for the new round (Pitch & Putt uses 3 holes)
+                  if (_pitchMode) {
+                    for (final p in _scores.keys) {
+                      _scores[p] = <int, int>{1: 0, 2: 0, 3: 0};
+                    }
+                  }
+                });
+                _saveCache();
+                // record the created round locally
+                try {
+                  final r = <String, dynamic>{
+                    'id': rid,
+                    'round_number': (_rounds.length + 1),
+                    'started_at': DateTime.now().toIso8601String(),
+                  };
+                  _rounds.add(r);
+                  final box = Hive.box('live_cache');
+                  box.put('game_${widget.gameId}_rounds', jsonEncode(_rounds));
+                } catch (_) {}
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Erro a criar round: $e')),
+                );
+                if (!mounted) return;
+              }
+            } else {
+              try {
+                if (_currentRoundId != null) {
+                  await Api.completeRound(widget.gameId, _currentRoundId!);
+                }
+                final stats = await Api.finalizeGame(widget.gameId);
+                if (!mounted) return;
+                // mark current round finished locally
+                try {
+                  if (_currentRoundId != null) {
+                    final idx = _rounds.indexWhere(
+                      (rr) => rr['id'] == _currentRoundId,
+                    );
+                    if (idx != -1) {
+                      _rounds[idx]['finished_at'] = DateTime.now()
+                          .toIso8601String();
+                      try {
+                        final box = Hive.box('live_cache');
+                        box.put(
+                          'game_${widget.gameId}_rounds',
+                          jsonEncode(_rounds),
+                        );
+                      } catch (_) {}
+                    }
+                  }
+                } catch (_) {}
+                await showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Jogo finalizado'),
+                    content: SingleChildScrollView(
+                      child: Text(
+                        "Vencedor: ${stats['winner']}\nTotals: ${stats['totals']}",
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('OK'),
+                      ),
+                    ],
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('Erro a finalizar: $e')));
+              }
+            }
           }
         }
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro: $e')));
     }
   }
 
@@ -259,29 +478,54 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       String? sel;
       if (filtered.isNotEmpty && !allowManual) {
         if (!mounted) return;
-        sel = await showDialog<String?>(context: context, builder: (_) => SimpleDialog(title: const Text('Convidar utilizador'), children: filtered.map((u) {
-          final name = u['name'] as String? ?? '';
-          return SimpleDialogOption(onPressed: () => Navigator.pop(context, name), child: Text(name));
-        }).toList()));
+        sel = await showDialog<String?>(
+          context: context,
+          builder: (_) => SimpleDialog(
+            title: const Text('Convidar utilizador'),
+            children: filtered.map((u) {
+              final name = u['name'] as String? ?? '';
+              return SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, name),
+                child: Text(name),
+              );
+            }).toList(),
+          ),
+        );
       } else {
         // fallback: ask user to type a username to invite
         final ctrl = TextEditingController();
         if (!mounted) return;
-        sel = await showDialog<String?>(context: context, builder: (_) => AlertDialog(
-          title: const Text('Convidar utilizador (manual)'),
-          content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Nome de utilizador')),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, null), child: const Text('Cancelar')),
-            TextButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Convidar')),
-          ],
-        ));
+        sel = await showDialog<String?>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Convidar utilizador (manual)'),
+            content: TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(
+                labelText: 'Nome de utilizador',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, null),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+                child: const Text('Convidar'),
+              ),
+            ],
+          ),
+        );
       }
       if (sel == null) return;
       final pname = sel;
       final ok = await Api.addPlayer(widget.gameId, pname);
       if (!ok) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Erro ao convidar')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Erro ao convidar')));
         return;
       }
       setState(() {
@@ -290,7 +534,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       });
       _saveCache();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Convidado: $sel')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Convidado: $sel')));
     } catch (e) {
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
@@ -325,7 +571,10 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           decoration: const InputDecoration(labelText: 'Tacadas'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, null), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancelar'),
+          ),
           TextButton(
             onPressed: () {
               final v = int.tryParse(ctrl.text) ?? current;
@@ -348,33 +597,48 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         _saveCache();
         if (!mounted) return;
         final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(const SnackBar(content: Text('Tacadas atualizadas')));
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Tacadas atualizadas')),
+        );
       } catch (e) {
         if (!mounted) return;
         final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(SnackBar(content: Text('Erro ao actualizar: $e')));
+        messenger.showSnackBar(
+          SnackBar(content: Text('Erro ao actualizar: $e')),
+        );
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final int maxAllowedHole = widget.holes > 0 ? widget.holes : 99;
+    final int maxAllowedHole = _pitchMode
+        ? 3
+        : (widget.holes > 0 ? widget.holes : 99);
     return Scaffold(
       appBar: AppBar(title: Text('Live — ${widget.course}')),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12.0,
+              vertical: 8.0,
+            ),
             child: Row(
               children: [
-                Text('Buraco: $_currentHole / ${widget.holes == 0 ? '?' : widget.holes}'),
+                Text(
+                  'Buraco: $_currentHole / ${widget.holes == 0 ? '?' : widget.holes}',
+                ),
                 const SizedBox(width: 12),
                 if (_scores.isNotEmpty)
                   DropdownButton<String>(
-                    value: _activePlayer ?? (_scores.keys.isNotEmpty ? _scores.keys.first : null),
+                    value:
+                        _activePlayer ??
+                        (_scores.keys.isNotEmpty ? _scores.keys.first : null),
                     hint: const Text('Selecionar jogador'),
-                    items: _scores.keys.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+                    items: _scores.keys
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
                     onChanged: (v) => setState(() => _activePlayer = v),
                   ),
                 const SizedBox(width: 12),
@@ -406,7 +670,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                             for (final p in _scores.keys) {
                               _scores[p] = _scores[p] ?? <int, int>{};
                               if (newHole <= maxAllowedHole) {
-                                _scores[p]![newHole] = _scores[p]![newHole] ?? 0;
+                                _scores[p]![newHole] =
+                                    _scores[p]![newHole] ?? 0;
                               }
                             }
                           });
@@ -417,13 +682,17 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                 // Show game mode (Pitch & Putt games are initialized from game metadata)
                 Padding(
                   padding: const EdgeInsets.only(right: 12.0),
-                  child: Text('Modo: ${_pitchMode ? 'Pitch & Putt' : 'Standard'}'),
+                  child: Text(
+                    'Modo: ${_pitchMode ? 'Pitch & Putt' : 'Standard'}',
+                  ),
                 ),
                 const Spacer(),
                 Text('Tacadas: $_strokesToAdd'),
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: _strokesToAdd > 1 ? () => setState(() => _strokesToAdd--) : null,
+                  onPressed: _strokesToAdd > 1
+                      ? () => setState(() => _strokesToAdd--)
+                      : null,
                 ),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
@@ -432,9 +701,15 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               ],
             ),
           ),
-          ElevatedButton(onPressed: _addStroke, child: const Text('Adicionar stroke')),
+          ElevatedButton(
+            onPressed: _addStroke,
+            child: const Text('Adicionar stroke'),
+          ),
           const SizedBox(width: 8),
-          ElevatedButton(onPressed: _invitePlayer, child: const Text('Convidar jogador')),
+          ElevatedButton(
+            onPressed: _invitePlayer,
+            child: const Text('Convidar jogador'),
+          ),
           const SizedBox(height: 8),
           Expanded(
             child: SingleChildScrollView(
@@ -442,8 +717,101 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Jogo: ${widget.course}   Buraco atual: $_currentHole', style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    'Jogo: ${widget.course}   Buraco atual: $_currentHole',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 8),
+                  if (_rounds.isNotEmpty) ...[
+                    const Text('Rounds:'),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      children: _rounds.map((r) {
+                        final rn = r['round_number'] ?? r['id'];
+                        final finished = r['finished_at'] != null;
+                        final color = finished ? Colors.grey : Colors.green;
+                        final icon = finished ? Icons.check : Icons.play_arrow;
+                        return ActionChip(
+                          avatar: CircleAvatar(
+                            backgroundColor: color,
+                            child: Icon(icon, size: 16, color: Colors.white),
+                          ),
+                          label: Text('R$rn'),
+                          onPressed: () async {
+                            // show round details
+                            await showDialog(
+                              context: context,
+                              builder: (_) => AlertDialog(
+                                title: Text('Round $rn'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('ID: ${r['id']}'),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Started: ${r['started_at'] ?? 'unknown'}',
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Finished: ${r['finished_at'] ?? 'open'}',
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  if (!finished)
+                                    TextButton(
+                                      onPressed: () async {
+                                        Navigator.pop(context);
+                                        try {
+                                          final rid = r['id'] as int?;
+                                          if (rid != null) {
+                                            await Api.completeRound(
+                                              widget.gameId,
+                                              rid,
+                                            );
+                                            setState(() {
+                                              r['finished_at'] = DateTime.now()
+                                                  .toIso8601String();
+                                            });
+                                            try {
+                                              final box = Hive.box(
+                                                'live_cache',
+                                              );
+                                              box.put(
+                                                'game_${widget.gameId}_rounds',
+                                                jsonEncode(_rounds),
+                                              );
+                                            } catch (_) {}
+                                          }
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(content: Text('Erro: $e')),
+                                          );
+                                        }
+                                      },
+                                      child: const Text(
+                                        'Marcar como terminado',
+                                      ),
+                                    ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Fechar'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (!mounted) return;
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   _buildScoreTable(),
                   const SizedBox(height: 12),
                   const Text('Eventos (últimos primeiro):'),
@@ -451,7 +819,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     itemCount: _events.length,
-                    itemBuilder: (context, index) => ListTile(title: Text(_events[index])),
+                    itemBuilder: (context, index) =>
+                        ListTile(title: Text(_events[index])),
                   ),
                 ],
               ),
@@ -506,11 +875,21 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       if (b != null) best[h] = b;
     }
 
-    DataColumn col(String label, {TextStyle? style}) => DataColumn(label: Text(label, style: style));
+    DataColumn col(String label, {TextStyle? style}) =>
+        DataColumn(label: Text(label, style: style));
 
     final headerStyle = TextStyle(fontWeight: FontWeight.bold);
     final columns = <DataColumn>[col('Player', style: headerStyle)];
-    columns.addAll(holes.map((h) => col('$h', style: h == _currentHole ? headerStyle.copyWith(color: Colors.green[900]) : headerStyle)));
+    columns.addAll(
+      holes.map(
+        (h) => col(
+          '$h',
+          style: h == _currentHole
+              ? headerStyle.copyWith(color: Colors.green[900])
+              : headerStyle,
+        ),
+      ),
+    );
     columns.add(col('Total', style: headerStyle));
 
     List<DataRow> rows = [];
@@ -529,10 +908,17 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
           final cellChild = Container(
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             decoration: BoxDecoration(
-              color: h == _currentHole ? Colors.greenAccent.withAlpha((0.25 * 255).round()) : null,
+              color: h == _currentHole
+                  ? Colors.greenAccent.withAlpha((0.25 * 255).round())
+                  : null,
               borderRadius: h == _currentHole ? BorderRadius.circular(4) : null,
             ),
-            child: Text(text, style: h == _currentHole ? const TextStyle(fontWeight: FontWeight.bold) : null),
+            child: Text(
+              text,
+              style: h == _currentHole
+                  ? const TextStyle(fontWeight: FontWeight.bold)
+                  : null,
+            ),
           );
           cells.add(DataCell(cellChild, onTap: () => _editCell(p, h)));
         }
