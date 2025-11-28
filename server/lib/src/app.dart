@@ -9,6 +9,8 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'db.dart';
+import 'auth_helpers.dart';
+import 'db_helpers.dart';
 
 final Map<int, Set<WebSocketChannel>> _gameSockets = {};
 final Set<WebSocketChannel> _adminSockets = {};
@@ -132,22 +134,7 @@ Handler createHandler() {
     }
   });
 
-  // Helper: extract API key from Authorization header and return user row
-  Future<Map<String, dynamic>?> userFromRequest(Request req) async {
-    final auth = req.headers['authorization'];
-    if (auth == null || !auth.toLowerCase().startsWith('bearer ')) return null;
-    final token = auth.substring(7).trim();
-    if (token.isEmpty) return null;
-    final res = await DB.conn.query('SELECT id, name, api_key, role FROM users WHERE api_key = @k', substitutionValues: {'k': token});
-    if (res.isEmpty) return null;
-    final row = res.first;
-    return {
-      'id': row[0],
-      'name': row[1],
-      'api_key': row[2],
-      'role': row[3],
-    };
-  }
+  // note: authentication helpers moved to `auth_helpers.dart`
 
   String randomToken([int length = 32]) {
     final rnd = Random.secure();
@@ -223,20 +210,8 @@ Handler createHandler() {
   // Helper: build and broadcast the canonical game_state for a game
   Future<void> broadcastGameStateFor(int gid) async {
     try {
-      final rows = await DB.conn.query(
-        'SELECT player_name, hole_number, SUM(strokes) as strokes_sum FROM strokes WHERE game_id = @gid GROUP BY player_name, hole_number',
-        substitutionValues: {'gid': gid},
-      );
-      final Map<String, Map<int, int>> players = {};
-      final Map<String, int> totals = {};
-      for (final r in rows) {
-        final pname = r[0] as String;
-        final hole = (r[1] as int);
-        final ssum = (r[2] as int?) ?? 0;
-        players.putIfAbsent(pname, () => {})[hole] = ssum;
-        totals[pname] = (totals[pname] ?? 0) + ssum;
-      }
-      final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': players, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
+      final state = await fetchCanonicalGameState(gid);
+      final statePayload = jsonEncode({'type': 'game_state', 'game_id': gid, 'players': state['players'], 'totals': state['totals'], 'ts': DateTime.now().toIso8601String()});
       sendToGameSockets(gid, statePayload);
     } catch (_) {}
   }
@@ -657,11 +632,7 @@ Handler createHandler() {
       }
       await DB.conn.query('UPDATE rounds SET finished_at = now() WHERE id = @rid AND game_id = @gid', substitutionValues: {'rid': roundId, 'gid': gid});
       // compute totals for this round
-      final rows = await DB.conn.query('SELECT player_name, SUM(strokes) FROM strokes WHERE round_id = @rid GROUP BY player_name', substitutionValues: {'rid': roundId});
-      final Map<String, int> totals = {};
-      for (final r in rows) {
-        totals[r[0] as String] = (r[1] as int?) ?? 0;
-      }
+      final Map<String, int> totals = await fetchRoundTotals(roundId);
       final payload = jsonEncode({'type': 'round_completed', 'game_id': gid, 'round_id': roundId, 'totals': totals, 'ts': DateTime.now().toIso8601String()});
       sendToGameSockets(gid, payload);
       await broadcastGameStateFor(gid);
@@ -683,11 +654,7 @@ Handler createHandler() {
         return Response.forbidden('Only game creator may finalize the game');
       }
       // compute totals across all rounds/strokes
-      final rows = await DB.conn.query('SELECT player_name, SUM(strokes) as total FROM strokes WHERE game_id = @gid GROUP BY player_name', substitutionValues: {'gid': gid});
-      final Map<String, int> totals = {};
-      for (final r in rows) {
-        totals[r[0] as String] = (r[1] as int?) ?? 0;
-      }
+      final Map<String, int> totals = await fetchGameTotals(gid);
       if (totals.isEmpty) return Response.ok(jsonEncode({'ok': true, 'message': 'No strokes recorded'}), headers: {'content-type': 'application/json'});
       // determine winner by lowest total
       String? winner;
