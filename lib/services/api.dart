@@ -325,6 +325,51 @@ class Api {
     }
     throw Exception('Failed to list rounds: ${res.statusCode} ${res.body}');
   }
+  
+  static Future<Map<String, int>> getGameTotals(int gameId) async {
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.get(
+      Uri.parse('$baseUrl/games/$gameId/totals'),
+      headers: headers,
+    );
+    if (res.statusCode == 200) {
+      final map = jsonDecode(res.body) as Map<String, dynamic>;
+      final totalsRaw = (map['totals'] as Map?) ?? {};
+      final totals = <String, int>{};
+      totalsRaw.forEach((k, v) {
+        totals[k.toString()] = (v as num).toInt();
+      });
+      return totals;
+    }
+    throw Exception('Failed to fetch game totals: ${res.statusCode} ${res.body}');
+  }
+
+  /// Fetch totals for multiple games in one call. Returns a map gameId -> (player -> total)
+  static Future<Map<int, Map<String, int>>> getGamesTotals(List<int> gameIds) async {
+    if (gameIds.isEmpty) return {};
+    final ids = gameIds.join(',');
+    final headers = <String, String>{'content-type': 'application/json'};
+    _attachAuthHeaders(headers);
+    final res = await http.get(Uri.parse('$baseUrl/games/totals?ids=$ids'), headers: headers);
+    if (res.statusCode == 200) {
+      final map = jsonDecode(res.body) as Map<String, dynamic>;
+      final gamesRaw = (map['games'] as Map?) ?? {};
+      final out = <int, Map<String, int>>{};
+      gamesRaw.forEach((k, v) {
+        final gid = int.tryParse(k.toString());
+        if (gid == null) return;
+        final totalsRaw = (v as Map?) ?? {};
+        final totals = <String, int>{};
+        totalsRaw.forEach((pk, pv) {
+          totals[pk.toString()] = (pv as num).toInt();
+        });
+        out[gid] = totals;
+      });
+      return out;
+    }
+    throw Exception('Failed to fetch games totals: ${res.statusCode} ${res.body}');
+  }
 
   // Admin: trigger an immediate update (git pull / pub get) — server will exit to allow restart
   static Future<Map<String, dynamic>> triggerUpdate() async {

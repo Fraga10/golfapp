@@ -46,6 +46,8 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
   final Set<String> _recentLocalWrites = {};
   // player -> hole -> strokes
   final Map<String, Map<int, int>> _scores = {};
+  // server-reported aggregated totals (player -> total) to seed the banner
+  Map<String, int> _serverTotals = {};
 
   @override
   void initState() {
@@ -217,6 +219,15 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
               // do not set display to the newly-created current round; user wants to see only the last finished round
             } catch (_) {}
           }
+          // Fetch server aggregated totals to seed the banner before WS sync
+          try {
+            final totals = await Api.getGameTotals(widget.gameId);
+            if (mounted) {
+              setState(() {
+                _serverTotals = totals;
+              });
+            }
+          } catch (_) {}
         }
       } catch (_) {}
     } catch (_) {}
@@ -937,6 +948,9 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
+                  // Always-visible leaderboard/totals summary
+                  _buildTotalsBanner(),
+                  const SizedBox(height: 8),
                   // Rounds chips hidden: only show the last finished round details
                   const SizedBox.shrink(),
                   _buildScoreTable(),
@@ -964,6 +978,12 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
         }
       }
       totals[p] = t;
+    }
+    // merge serverTotals for players without per-hole scores yet
+    for (final entry in _serverTotals.entries) {
+      if (!totals.containsKey(entry.key) || (totals[entry.key] ?? 0) == 0) {
+        totals[entry.key] = entry.value;
+      }
     }
     players.sort((a, b) {
       final ta = totals[a] ?? 0;
@@ -1053,6 +1073,57 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(columns: columns, rows: rows),
+    );
+  }
+
+  /// Banner showing totals/leaderboard sorted by total (ascending)
+  Widget _buildTotalsBanner() {
+    final players = _scores.keys.toList();
+    final Map<String, int> totals = {};
+    for (final p in players) {
+      var t = 0;
+      final hm = _scores[p];
+      if (hm != null && hm.isNotEmpty) {
+        for (final v in hm.values) {
+          t += v;
+        }
+      }
+      totals[p] = t;
+    }
+    if (players.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final entries = totals.entries.toList();
+    entries.sort((a, b) {
+      if (a.value != b.value) return a.value.compareTo(b.value);
+      return a.key.compareTo(b.key);
+    });
+    // Build a compact horizontal list showing player: total
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: entries.map((e) {
+            final isLeader = e == entries.first;
+            return Padding(
+              padding: const EdgeInsets.only(right: 12.0),
+              child: Row(
+                children: [
+                  Text(
+                    '${e.key}: ',
+                    style: TextStyle(fontWeight: isLeader ? FontWeight.bold : FontWeight.normal),
+                  ),
+                  Text(
+                    '${e.value}',
+                    style: TextStyle(color: isLeader ? Colors.green[800] : null, fontWeight: isLeader ? FontWeight.bold : null),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 }

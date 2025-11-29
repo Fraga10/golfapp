@@ -950,6 +950,41 @@ Handler createHandler() {
     }
   });
 
+  // Get totals across a game (aggregate strokes per player)
+  router.get('/games/<id|[0-9]+>/totals', (Request req, String id) async {
+    final gid = int.parse(id);
+    try {
+      final totals = await fetchGameTotals(gid);
+      return Response.ok(jsonEncode({'totals': totals}),
+          headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error fetching game totals: $e');
+    }
+  });
+
+  // Batch totals for multiple games: /games/totals?ids=1,2,3
+  router.get('/games/totals', (Request req) async {
+    try {
+      final qp = req.requestedUri.queryParameters['ids'];
+      if (qp == null || qp.trim().isEmpty) {
+        return Response(400, body: 'Missing ids query parameter');
+      }
+      final ids = qp.split(',').map((s) => int.tryParse(s.trim())).whereType<int>().toList();
+      final Map<String, dynamic> out = {};
+      for (final gid in ids) {
+        try {
+          final totals = await fetchGameTotals(gid);
+          out['$gid'] = totals;
+        } catch (_) {
+          out['$gid'] = {};
+        }
+      }
+      return Response.ok(jsonEncode({'games': out}), headers: {'content-type': 'application/json'});
+    } catch (e) {
+      return Response(500, body: 'Error fetching batch totals: $e');
+    }
+  });
+
   // Complete a round (set finished_at) and return round totals
   router.patch('/games/<id|[0-9]+>/rounds/<rid|[0-9]+>/complete',
       (Request req, String id, String rid) async {

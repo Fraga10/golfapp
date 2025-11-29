@@ -17,17 +17,44 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late Future<List<Map<String, dynamic>>> _gamesFuture;
+  // cached totals per game id
+  Map<int, Map<String, int>> _gamesTotals = {};
 
   @override
   void initState() {
     super.initState();
-    _loadGames();
+    _loadGamesAndTotals();
   }
 
   void _loadGames() {
     setState(() {
       _gamesFuture = Api.getGames();
     });
+  }
+
+  // After games are loaded, fetch totals in batch to avoid per-item requests
+  Future<void> _loadGamesAndTotals() async {
+    try {
+      final games = await Api.getGames();
+      final ids = games.map((g) => g['id'] as int).toList();
+      if (ids.isNotEmpty) {
+        final totals = await Api.getGamesTotals(ids);
+        if (!mounted) return;
+        setState(() {
+          _gamesTotals = totals;
+          _gamesFuture = Future.value(games);
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _gamesTotals = {};
+          _gamesFuture = Future.value(games);
+        });
+      }
+    } catch (e) {
+      // fallback to single fetch future
+      _loadGames();
+    }
   }
 
   Future<void> _confirmAndDelete(int id) async {
@@ -152,8 +179,27 @@ class _HomeScreenState extends State<HomeScreen> {
               final status = map['status'] as String? ?? '';
               return ListTile(
                 title: Text(game.course),
-                subtitle: Text(
-                  '${DateFormat.yMMMd().format(game.date)} • ${status == 'active' ? 'dinâmico' : '${game.holes} buracos'}',
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${DateFormat.yMMMd().format(game.date)} • ${status == 'active' ? 'dinâmico' : '${game.holes} buracos'}',
+                    ),
+                    const SizedBox(height: 4),
+                    // Show live leader / totals when available (from batch cache)
+                    Builder(builder: (context) {
+                      final totals = _gamesTotals[game.id];
+                      if (totals == null) return const SizedBox.shrink();
+                      if (totals.isEmpty) return const SizedBox.shrink();
+                      final entries = totals.entries.toList();
+                      entries.sort((a, b) {
+                        if (a.value != b.value) return a.value.compareTo(b.value);
+                        return a.key.compareTo(b.key);
+                      });
+                      final leader = entries.first;
+                      return Text('Líder: ${leader.key} (${leader.value})', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600));
+                    }),
+                  ],
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
