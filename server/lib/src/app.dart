@@ -22,7 +22,7 @@ Handler createHandler() {
   // If the tunnel/proxy provides a public host/proto, rewrite the Host header
   // on the Request so downstream components (and any router redirects) use
   // the public hostname instead of the origin internal IP.
-  FutureOr<Response> _forwardingWrapper(Request req) async {
+  FutureOr<Response> forwardingWrapper(Request req) async {
     try {
       final headers = Map<String, String>.from(req.headers);
       String? forwarded = headers['forwarded'];
@@ -1259,5 +1259,5 @@ Handler createHandler() {
   // (admin debug endpoint for strokes removed)
 
   // Return the forwarding wrapper which rewrites Host from proxy headers
-  return _forwardingWrapper;
+  return forwardingWrapper;
 }

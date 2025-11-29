@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
 import 'screens/home.dart';
 import 'services/api.dart';
 
@@ -15,6 +16,10 @@ void main() async {
   await Hive.openBox('live_cache');
   await Hive.openBox('auth');
   await Api.loadAuthFromStorage();
+  // Print resolved API base URL to help diagnose network issues
+  try {
+    debugPrint('Resolved API_BASE_URL=${Api.baseUrl}');
+  } catch (_) {}
   runApp(const MyApp());
 }
 
