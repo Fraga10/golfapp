@@ -1,39 +1,14 @@
 version: '3.8'
 services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: golfe_db
-      POSTGRES_USER: golfe_user
-      POSTGRES_PASSWORD: golfepass
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U golfe_user"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    profiles: ["db"]
-
   server:
     build:
       context: .
       dockerfile: Dockerfile
+    # Load environment variables from `server/.env` (create from `.env.example`)
+    env_file:
+      - .env
     environment:
-      # If you want to use an external DB specified in `.env`, set DB_HOST accordingly
-      # by default the compose server uses the `db` service (started when running
-      # with `--profile db`). To use an external DB, set DB_HOST in your `.env`.
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: golfe_db
-      DB_USER: golfe_user
-      DB_PASS: golfepass
-      PORT: 8080
+      # Keep an explicit PORT fallback; DB settings must come from .env
+      PORT: ${PORT:-8080}
     ports:
       - "8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  pgdata:
