@@ -165,10 +165,15 @@ class Api {
   }
 
   static WebSocketChannel wsForGame(int gameId) {
-    // Connect to ws endpoint; on production use wss and a proper host
+    // Build a proper websocket URI from the configured baseUrl.
+    // This handles https/http, optional ports, and avoids issues when baseUrl
+    // contains a path segment.
     final scheme = baseUrl.startsWith('https') ? 'wss' : 'ws';
-    final host = baseUrl.replaceFirst(RegExp(r'^https?://'), '');
-    final uri = Uri.parse('$scheme://$host/ws/games/$gameId');
+    final parsed = Uri.parse(baseUrl);
+    final host = parsed.host;
+    final port = parsed.hasPort ? parsed.port : null;
+    final path = '/ws/games/$gameId';
+    final uri = Uri(scheme: scheme, host: host, port: port, path: path);
     return WebSocketChannel.connect(uri);
   }
 
