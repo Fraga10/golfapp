@@ -18,6 +18,44 @@ final Set<WebSocketChannel> _adminSockets = {};
 Handler createHandler() {
   final router = Router();
 
+  // Middleware: respect X-Forwarded-* or Forwarded headers from proxies/tunnels.
+  // If the tunnel/proxy provides a public host/proto, rewrite the Host header
+  // on the Request so downstream components (and any router redirects) use
+  // the public hostname instead of the origin internal IP.
+  FutureOr<Response> _forwardingWrapper(Request req) async {
+    try {
+      final headers = Map<String, String>.from(req.headers);
+      String? forwarded = headers['forwarded'];
+      String? xfh = headers['x-forwarded-host'];
+      String? xfp = headers['x-forwarded-proto'];
+
+      // Parse `Forwarded: for=...; proto=https; host=apigolf.rgfapp.com` if present
+      if ((xfh == null || xfh.isEmpty) && forwarded != null && forwarded.isNotEmpty) {
+        try {
+          final parts = forwarded.split(RegExp(r';\s*'));
+          for (final p in parts) {
+            final kv = p.split('=');
+            if (kv.length == 2) {
+              final k = kv[0].trim();
+              final v = kv[1].trim();
+              if (k.toLowerCase() == 'host') xfh = v;
+              if (k.toLowerCase() == 'proto') xfp = v;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (xfh != null && xfh.isNotEmpty) {
+        headers['host'] = xfh;
+        // Also ensure the scheme header is present for any downstream logic
+        if (xfp != null && xfp.isNotEmpty) headers['x-forwarded-proto'] = xfp;
+        final changed = req.change(headers: headers);
+        return await router.call(changed);
+      }
+    } catch (_) {}
+    return await router.call(req);
+  }
+
   // Self-update / watcher state
   bool autoUpdateEnabled = false;
   bool updateInProgress = false;
@@ -1220,5 +1258,6 @@ Handler createHandler() {
   // Admin debug: list raw strokes and aggregated view for a game (optional round)
   // (admin debug endpoint for strokes removed)
 
-  return router.call;
+  // Return the forwarding wrapper which rewrites Host from proxy headers
+  return _forwardingWrapper;
 }
