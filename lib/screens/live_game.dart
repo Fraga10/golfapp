@@ -746,10 +746,11 @@ class _LiveGameScreenState extends State<LiveGameScreen> {
       });
       box.put(key, jsonEncode(enc));
       try {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Tabela guardada com sucesso')),
           );
+        }
       } catch (_) {}
     } catch (_) {}
   }

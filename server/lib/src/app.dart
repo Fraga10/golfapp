@@ -281,7 +281,9 @@ Handler createHandler() {
     final res = await DB.conn.query(
         'SELECT g.id, g.course, g.date, g.holes, g.status, g.created_by, u.name FROM games g LEFT JOIN users u ON g.created_by = u.id WHERE g.id = @id',
         substitutionValues: {'id': int.parse(id)});
-    if (res.isEmpty) return Response.notFound('Game not found');
+    if (res.isEmpty) {
+      return Response.notFound('Game not found');
+    }
     final row = res.first;
     final game = {
       'id': row[0],
@@ -447,8 +449,9 @@ Handler createHandler() {
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final name = (body['name'] as String?)?.trim();
     final password = body['password'] as String?;
-    if (name == null || password == null)
+    if (name == null || password == null) {
       return Response(400, body: 'Missing name/password');
+    }
     // ensure column exists
     await DB.conn.execute(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT");
@@ -458,13 +461,18 @@ Handler createHandler() {
     final res = await DB.conn.query(
         'SELECT id, name, api_key, password_hash, role FROM users WHERE name = @name',
         substitutionValues: {'name': name});
-    if (res.isEmpty) return Response.forbidden('Invalid credentials');
+    if (res.isEmpty) {
+      return Response.forbidden('Invalid credentials');
+    }
     final row = res.first;
     final storedHash = row[3] as String?;
-    if (storedHash == null || storedHash.isEmpty)
+    if (storedHash == null || storedHash.isEmpty) {
       return Response(400, body: 'User has no password set');
+    }
     final ok = verifyPassword(password, storedHash);
-    if (!ok) return Response.forbidden('Invalid credentials');
+    if (!ok) {
+      return Response.forbidden('Invalid credentials');
+    }
     final user = {
       'id': row[0],
       'name': row[1],
@@ -478,8 +486,9 @@ Handler createHandler() {
   // Admin: list users
   router.get('/users', (Request req) async {
     final user = await userFromRequest(req);
-    if (user == null || user['role'] != 'admin')
+    if (user == null || user['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final res = await DB.conn
         .query('SELECT id, name, role, api_key FROM users ORDER BY id');
     final list = res
@@ -492,14 +501,16 @@ Handler createHandler() {
   // Admin: create user (alternate endpoint to register; requires admin)
   router.post('/users', (Request req) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final name = (body['name'] as String?)?.trim();
     final password = body['password'] as String?;
     final role = (body['role'] as String?) ?? 'viewer';
-    if (name == null || name.isEmpty || password == null || password.isEmpty)
+    if (name == null || name.isEmpty || password == null || password.isEmpty) {
       return Response(400, body: 'Missing name or password');
+    }
     final apiKey = randomToken();
     final passHash = makePasswordHash(password);
     final res = await DB.conn.query(
@@ -519,8 +530,9 @@ Handler createHandler() {
   // Admin: update user role
   router.patch('/users/<id|[0-9]+>', (Request req, String id) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final updates = <String>[];
     final values = <String, dynamic>{'id': int.parse(id)};
@@ -528,7 +540,9 @@ Handler createHandler() {
       updates.add('role = @role');
       values['role'] = body['role'];
     }
-    if (updates.isEmpty) return Response(400, body: 'Nothing to update');
+    if (updates.isEmpty) {
+      return Response(400, body: 'Nothing to update');
+    }
     final sql = 'UPDATE users SET ${updates.join(', ')} WHERE id = @id';
     await DB.conn.query(sql, substitutionValues: values);
     return Response.ok(jsonEncode({'ok': true}),
@@ -538,8 +552,9 @@ Handler createHandler() {
   // Admin: revoke/regenerate api key for a user
   router.post('/users/<id|[0-9]+>/revoke', (Request req, String id) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final newKey = randomToken();
     await DB.conn.query('UPDATE users SET api_key = @k WHERE id = @id',
         substitutionValues: {'k': newKey, 'id': int.parse(id)});
@@ -550,14 +565,17 @@ Handler createHandler() {
   // Admin: delete a user
   router.delete('/users/<id|[0-9]+>', (Request req, String id) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final uid = int.parse(id);
     // Ensure user exists
     final res = await DB.conn.query(
         'SELECT id, name, role FROM users WHERE id = @id',
         substitutionValues: {'id': uid});
-    if (res.isEmpty) return Response.notFound('User not found');
+    if (res.isEmpty) {
+      return Response.notFound('User not found');
+    }
     final targetRole = res.first[2] as String? ?? 'viewer';
     // Prevent deleting the last admin
     if (targetRole == 'admin') {
@@ -578,13 +596,16 @@ Handler createHandler() {
   // Non-admin users must provide current_password.
   router.post('/users/<id|[0-9]+>/password', (Request req, String id) async {
     final requester = await userFromRequest(req);
-    if (requester == null) return Response.forbidden('Authentication required');
+    if (requester == null) {
+      return Response.forbidden('Authentication required');
+    }
     final uid = int.parse(id);
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final newPassword = body['new_password'] as String?;
     final currentPassword = body['current_password'] as String?;
-    if (newPassword == null || newPassword.isEmpty)
+    if (newPassword == null || newPassword.isEmpty) {
       return Response(400, body: 'Missing new_password');
+    }
 
     // Permission: admin or same user
     final isAdmin = (requester['role'] as String?) == 'admin';
@@ -596,14 +617,18 @@ Handler createHandler() {
     final res = await DB.conn.query(
         'SELECT password_hash FROM users WHERE id = @id',
         substitutionValues: {'id': uid});
-    if (res.isEmpty) return Response.notFound('User not found');
+    if (res.isEmpty) {
+      return Response.notFound('User not found');
+    }
     final storedHash = res.first[0] as String?;
     if (!isAdmin) {
-      if (storedHash == null || storedHash.isEmpty)
+      if (storedHash == null || storedHash.isEmpty) {
         return Response(400, body: 'User has no password set');
+      }
       if (currentPassword == null ||
-          !verifyPassword(currentPassword, storedHash))
+          !verifyPassword(currentPassword, storedHash)) {
         return Response.forbidden('Invalid current password');
+      }
     }
 
     final passHash = makePasswordHash(newPassword);
@@ -624,7 +649,9 @@ Handler createHandler() {
       updates.add('status = @status');
       values['status'] = body['status'];
     }
-    if (updates.isEmpty) return Response(400, body: 'Nothing to update');
+    if (updates.isEmpty) {
+      return Response(400, body: 'Nothing to update');
+    }
     final sql = 'UPDATE games SET ${updates.join(', ')} WHERE id = @id';
     await DB.conn.query(sql, substitutionValues: values);
     return Response.ok(jsonEncode({'ok': true}),
@@ -717,10 +744,14 @@ Handler createHandler() {
       }
     } catch (_) {}
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final role = (user['role'] as String?) ?? 'viewer';
     // viewers cannot post strokes
-    if (role == 'viewer') return Response.forbidden('Insufficient permissions');
+    if (role == 'viewer') {
+      return Response.forbidden('Insufficient permissions');
+    }
     // players: allow posting strokes only if the posting user is a participant
     // in this game, and the target player is also part of the same game.
     if (role == 'player') {
@@ -730,16 +761,18 @@ Handler createHandler() {
           'SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p',
           substitutionValues: {'gid': gid, 'p': posterName});
       final posterCount = (posterRes.first[0] as int?) ?? 0;
-      if (posterCount == 0)
+      if (posterCount == 0) {
         return Response.forbidden(
             'Players must be participants of the game to post strokes');
+      }
       // check target exists in game
       final targetRes = await DB.conn.query(
           'SELECT count(*) FROM game_players WHERE game_id = @gid AND player_name = @p',
           substitutionValues: {'gid': gid, 'p': playerName});
       final targetCount = (targetRes.first[0] as int?) ?? 0;
-      if (targetCount == 0)
+      if (targetCount == 0) {
         return Response.forbidden('Target player not in game');
+      }
     }
     if (overwrite) {
       await DB.conn.transaction((ctx) async {
@@ -795,7 +828,9 @@ Handler createHandler() {
   // Create a new round for a game (Pitch & Putt round of 3 holes)
   router.post('/games/<id|[0-9]+>/rounds', (Request req, String id) async {
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final gid = int.parse(id);
     try {
       final rn = await DB.conn.query(
@@ -860,7 +895,9 @@ Handler createHandler() {
       final rr = await DB.conn.query(
           'SELECT id FROM rounds WHERE id = @rid AND game_id = @gid',
           substitutionValues: {'rid': roundId, 'gid': gid});
-      if (rr.isEmpty) return Response.notFound('Round not found');
+      if (rr.isEmpty) {
+        return Response.notFound('Round not found');
+      }
       final details = await fetchRoundDetails(roundId);
       return Response.ok(
           jsonEncode({
@@ -879,7 +916,9 @@ Handler createHandler() {
   router.patch('/games/<id|[0-9]+>/rounds/<rid|[0-9]+>/complete',
       (Request req, String id, String rid) async {
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final gid = int.parse(id);
     final roundId = int.parse(rid);
     try {
@@ -915,7 +954,9 @@ Handler createHandler() {
   // Finalize a game: only creator may finalize. Returns stats and winner (lowest strokes total)
   router.post('/games/<id|[0-9]+>/finalize', (Request req, String id) async {
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final gid = int.parse(id);
     try {
       final gr = await DB.conn.query(
@@ -927,10 +968,11 @@ Handler createHandler() {
       }
       // compute totals across all rounds/strokes
       final Map<String, int> totals = await fetchGameTotals(gid);
-      if (totals.isEmpty)
+      if (totals.isEmpty) {
         return Response.ok(
             jsonEncode({'ok': true, 'message': 'No strokes recorded'}),
             headers: {'content-type': 'application/json'});
+      }
       // determine winner by lowest total
       String? winner;
       int? best;
@@ -965,14 +1007,19 @@ Handler createHandler() {
   // Add a player to an existing game (invite/accept)
   router.post('/games/<id|[0-9]+>/players', (Request req, String id) async {
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final role = (user['role'] as String?) ?? 'viewer';
-    if (role == 'viewer') return Response.forbidden('Insufficient permissions');
+    if (role == 'viewer') {
+      return Response.forbidden('Insufficient permissions');
+    }
     final gid = int.parse(id);
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final playerName = (body['player_name'] as String?)?.trim();
-    if (playerName == null || playerName.isEmpty)
+    if (playerName == null || playerName.isEmpty) {
       return Response(400, body: 'Missing player_name');
+    }
 
     // avoid duplicate
     final exists = await DB.conn.query(
@@ -1002,10 +1049,13 @@ Handler createHandler() {
   // Delete game and its strokes
   router.delete('/games/<id|[0-9]+>', (Request req, String id) async {
     final user = await userFromRequest(req);
-    if (user == null) return Response.forbidden('Authentication required');
+    if (user == null) {
+      return Response.forbidden('Authentication required');
+    }
     final role = (user['role'] as String?) ?? 'viewer';
-    if (role != 'admin' && role != 'editor')
+    if (role != 'admin' && role != 'editor') {
       return Response.forbidden('Requires admin/editor');
+    }
     final gid = int.parse(id);
     await DB.conn.transaction((ctx) async {
       await ctx.query('DELETE FROM strokes WHERE game_id = @gid',
@@ -1092,11 +1142,12 @@ Handler createHandler() {
   // Admin: return the backend update log (update.log) content
   router.get('/admin/update_log', (Request req) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     try {
       final file = File('update.log');
-      if (!file.existsSync())
+      if (!file.existsSync()) {
         return Response.ok(
             jsonEncode({
               'lines': [],
@@ -1105,6 +1156,7 @@ Handler createHandler() {
               'enabled': autoUpdateEnabled
             }),
             headers: {'content-type': 'application/json'});
+      }
       final content = await file.readAsString();
       final lines = content
           .split(RegExp(r'\r?\n'))
@@ -1129,19 +1181,23 @@ Handler createHandler() {
   // Admin: get/set auto-update status
   router.get('/admin/auto_update', (Request req) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     return Response.ok(jsonEncode({'enabled': autoUpdateEnabled}),
         headers: {'content-type': 'application/json'});
   });
 
   router.post('/admin/auto_update', (Request req) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final enabled = body['enabled'] as bool?;
-    if (enabled == null) return Response(400, body: 'Missing enabled flag');
+    if (enabled == null) {
+      return Response(400, body: 'Missing enabled flag');
+    }
     saveAutoUpdate(enabled);
     return Response.ok(jsonEncode({'ok': true, 'enabled': autoUpdateEnabled}),
         headers: {'content-type': 'application/json'});
@@ -1150,8 +1206,9 @@ Handler createHandler() {
   // Admin: force immediate update (git pull / pub get / restart)
   router.post('/admin/trigger_update', (Request req) async {
     final requester = await userFromRequest(req);
-    if (requester == null || requester['role'] != 'admin')
+    if (requester == null || requester['role'] != 'admin') {
       return Response.forbidden('Requires admin');
+    }
     // run update asynchronously; endpoint will return before exiting
     Future(() async {
       await performUpdate();

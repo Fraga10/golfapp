@@ -43,8 +43,9 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading)
+    if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     final games = _games;
     final count = games.length;

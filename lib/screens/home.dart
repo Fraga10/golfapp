@@ -91,7 +91,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       context,
                       MaterialPageRoute(builder: (_) => const LoginScreen()),
                     );
-                    if (u != null) _loadGames();
+                    if (u != null) {
+                      _loadGames();
+                    }
                   },
                 );
               } else {
@@ -138,8 +140,9 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           }
           final games = snapshot.data ?? [];
-          if (games.isEmpty)
+          if (games.isEmpty) {
             return const Center(child: Text('Nenhum jogo registado ainda'));
+          }
           return ListView.separated(
             itemCount: games.length,
             separatorBuilder: (context, index) => const Divider(height: 1),

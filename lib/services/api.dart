@@ -115,8 +115,9 @@ class Api {
       headers: headers,
       body: jsonEncode({}),
     );
-    if (res.statusCode != 201)
+    if (res.statusCode != 201) {
       throw Exception('Failed to create round: ${res.statusCode}');
+    }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -131,8 +132,9 @@ class Api {
       headers: headers,
       body: jsonEncode({}),
     );
-    if (res.statusCode != 200)
+    if (res.statusCode != 200) {
       throw Exception('Failed to complete round: ${res.statusCode}');
+    }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -144,8 +146,9 @@ class Api {
       headers: headers,
       body: jsonEncode({}),
     );
-    if (res.statusCode != 200)
+    if (res.statusCode != 200) {
       throw Exception('Failed to finalize game: ${res.statusCode}');
+    }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -179,8 +182,9 @@ class Api {
       headers: {'content-type': 'application/json'},
       body: jsonEncode({'name': name, 'password': password}),
     );
-    if (res.statusCode != 200)
+    if (res.statusCode != 200) {
       throw Exception('Login failed: ${res.statusCode}');
+    }
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     _apiKey = map['api_key'] as String?;
     _currentUser = (map['user'] as Map<dynamic, dynamic>?)?.map(
@@ -240,8 +244,9 @@ class Api {
       headers: headers,
       body: jsonEncode({'name': name, 'password': password, 'role': role}),
     );
-    if (res.statusCode != 201)
+    if (res.statusCode != 201) {
       throw Exception('Failed to create user: ${res.statusCode}');
+    }
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
@@ -252,7 +257,9 @@ class Api {
       Uri.parse('$baseUrl/users/$id/revoke'),
       headers: headers,
     );
-    if (res.statusCode != 200) throw Exception('Failed to revoke user');
+    if (res.statusCode != 200) {
+      throw Exception('Failed to revoke user');
+    }
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     return map['api_key'] as String;
   }

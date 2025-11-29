@@ -151,10 +151,12 @@ class _UsersScreenState extends State<UsersScreen> {
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _usersFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting)
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError)
+          }
+          if (snapshot.hasError) {
             return Center(child: Text('Erro: ${snapshot.error}'));
+          }
           final users = snapshot.data ?? [];
           final current = Api.currentUser();
           final isAdmin =

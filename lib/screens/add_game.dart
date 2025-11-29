@@ -101,16 +101,17 @@ class _AddGameScreenState extends State<AddGameScreen> {
                       firstDate: DateTime(2000),
                       lastDate: DateTime(2100),
                     );
-                    if (d != null)
-                      setState(
-                        () => _date = DateTime(
+                    if (d != null) {
+                      setState(() {
+                        _date = DateTime(
                           d.year,
                           d.month,
                           d.day,
                           _date.hour,
                           _date.minute,
-                        ),
-                      );
+                        );
+                      });
+                    }
                   },
                 ),
               ),
