@@ -1,0 +1,50 @@
+name: Backend Smoke Test (Docker Compose)
+
+on:
+  push:
+    paths:
+      - 'server/**'
+  pull_request:
+    paths:
+      - 'server/**'
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    services: {}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and run with docker-compose (start DB profile)
+        working-directory: ./server
+        run: |
+          # start with the db profile so the Postgres service is created in CI
+          docker compose --profile db up --build -d
+
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl --silent --fail http://localhost:8080/health >/dev/null 2>&1; then
+              echo "Server healthy"
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 2
+          done
+
+          # If health endpoint fails, show logs and fail
+          if ! curl --silent --fail http://localhost:8080/health >/dev/null 2>&1; then
+            docker compose --profile db logs --no-color
+            exit 1
+          fi
+
+      - name: Run basic API checks
+        working-directory: ./server
+        run: |
+          echo "Checking /ping"
+          curl --fail http://localhost:8080/ping
+
+      - name: Tear down
+        if: always()
+        working-directory: ./server
+        run: docker compose down -v

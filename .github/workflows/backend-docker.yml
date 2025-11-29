@@ -27,7 +27,9 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_TOKEN }}
+          # Use the built-in GITHUB_TOKEN for authentication to GHCR when possible.
+          # Ensure the workflow permissions include `packages: write` (set above).
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
         uses: docker/build-push-action@v4
