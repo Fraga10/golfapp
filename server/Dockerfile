@@ -25,12 +25,15 @@ COPY --from=build --chown=appuser:appuser /app /app
 
 ENV PORT=8080
 EXPOSE 8080
-
-# Copy entrypoint (already present in build stage copy)
-# Make sure entrypoint is executable
+# Install inotify-tools for the dev watcher (only in final image)
 USER root
+RUN apt-get update && apt-get install -y inotify-tools && rm -rf /var/lib/apt/lists/* || true
+
+# Make sure entrypoints are executable
 RUN chmod +x /app/docker-entrypoint.sh || true
+RUN chmod +x /app/dev-entrypoint.sh || true
 USER appuser
 
-# Entrypoint will run migrations then start the server
+# Entrypoint will run the production entrypoint by default. In dev
+# mode we set DEV=1 in the compose override and run `dev-entrypoint.sh`
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
